@@ -1,65 +1,50 @@
 # CivSwitch-LDN-NX
 
-This is a homebrew application that runs natively on a Switch 1. It sends the
-CivSwitch JavaScript loader to a Switch 2 over local wireless (LDN).
-
-You do not need a computer to run it, and you do not need a prod.keys file.
-The only hardware required is:
-
-- a Switch 1 running homebrew, and
-- a Switch 2 hosting a Civilization VII lobby.
+> [!IMPORTANT]
+> **[CivSwitch](https://github.com/Gezine/CivSwitch) is an exploit by [Gezine](https://github.com/Gezine).** This program delivers it from a Switch 1 over local wireless (LDN), instead of from a Linux PC like [CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN). It runs as a `.nro` and does not need a prod.keys file.
 
 ## Lineage
 
-- **[ItsNerisma/CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN)**
-  (GPL-3.0-only) — the direct baseline; it delivers the same loader from a
-  Linux PC over LDN.
-- **[Gezine/CivSwitch](https://github.com/Gezine/CivSwitch)** (MIT) — the
-  original Civilization VII userland exploit, Remote JS Loader and persistent
-  installer.
-- **[kinnay/LDN](https://github.com/kinnay/LDN)** (GPL-3.0) — the LDN protocol
-  reference used by CivSwitchLDN.
+- **[ItsNerisma/CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN)** (GPL-3.0-only) — direct baseline; it delivers the same loader from a Linux PC over LDN.
+- **[Gezine/CivSwitch](https://github.com/Gezine/CivSwitch)** (MIT) — the original exploit, Remote JS Loader and persistent installer.
+- **[kinnay/LDN](https://github.com/kinnay/LDN)** (GPL-3.0) — LDN protocol reference used by CivSwitchLDN.
 
-All upstream copyright and license notices are preserved in `LICENSE` and
-`LICENSES/`.
+Upstream copyright and license notices are kept in `LICENSE` and `LICENSES/`.
 
 ## How it works
 
-1. Switch 2, with the physical Switch 1 edition of Civilization VII
-   (game version 1.0.0), hosts a wireless lobby.
-2. Switch 1 runs this `.nro`, scans LDN networks and joins the lobby through
-   the native `ldn:u` system service.
-3. The app sends the 19 compressed JS-loader chat messages, then disconnects
-   so Switch 2 can restore normal Wi-Fi.
-4. Switch 2 shows the Remote JS Loader (`CivSwitch 1.0 by Gezine`, awaiting a
-   payload on port 9026). The standard CivSwitch workflow applies from there.
+1. Switch 2 hosts a Civilization VII wireless lobby with the physical cartridge (game version 1.0.0).
+2. Switch 1 scans LDN and joins the lobby through the native `ldn:u` system service.
+3. The app sends the 19 compressed JS-loader chat messages, then disconnects so Switch 2 can restore Wi-Fi.
+4. Switch 2 shows the Remote JS Loader, awaiting a payload on port 9026. The standard CivSwitch workflow applies from there.
 
-The game cartridge remains in Switch 2 the whole time.
+The cartridge stays in Switch 2 the whole time.
 
 ## Requirements
 
 - A Switch 1 able to run `.nro` homebrew.
-- A Switch 2 with the physical Switch 1 edition of **Civilization VII
-  version 1.0.0** inserted.
+- A Switch 2 with the **physical Switch 1 edition of Civilization VII, version 1.0.0** inserted.
 - Both consoles within local wireless range.
 
 ## Usage
 
-1. On Switch 2, open Civilization VII and go to
-   **MULTIPLAYER > WIRELESS > CREATE GAME > HOST LOBBY**.
-2. Copy `civswitch-ldn-nx.nro` to `sd:/switch/civswitch-ldn-nx.nro` on
-   Switch 1 and launch it from Homebrew Menu. An application title override
-   is recommended to provide an LDN app context.
-3. Press `X` to rescan if needed, select the lobby with Up/Down, then press
-   `A` to join. Wait for `Game lobby: JOINED` and confirm the new player
-   appears in the Switch 2 player list.
-4. Press `R` once to send the loader. Progress counts 1/19 through 19/19,
-   after which the app disconnects automatically.
-5. On Switch 2, verify the loader screen shows `CivSwitch 1.0 by Gezine` and
-   `Awaiting payload at <Wi-Fi IP>:9026`.
+### 1. Setup the game
 
-`Y` sends an optional plain-chat test message (`Civ7-LDN-Hello`); it is not
-needed to join or to send the loader.
+On Switch 2, open Civilization VII and go to **MULTIPLAYER > WIRELESS > CREATE GAME > HOST LOBBY**.
+
+### 2. Launch the app
+
+Copy `civswitch-ldn-nx.nro` to `sd:/switch/civswitch-ldn-nx.nro` on Switch 1 and launch it from Homebrew Menu. An application title override is recommended to provide an LDN app context.
+
+### 3. Join the lobby
+
+Press `X` to rescan if needed, select the lobby with Up/Down, then press `A`. Wait for `Game lobby: JOINED` and check the new player in the Switch 2 player list.
+
+### 4. Send the loader
+
+Press `R` once. Progress counts 1/19 to 19/19, then the app disconnects automatically. On Switch 2, the loader screen should show `CivSwitch 1.0 by Gezine` and `Awaiting payload at <Wi-Fi IP>:9026`.
+
+`Y` sends one optional `Civ7-LDN-Hello` chat message; it isn't needed to join or send the loader.
 
 ### Controls
 
@@ -73,48 +58,28 @@ needed to join or to send the loader.
 | B | Leave the lobby |
 | + | Exit the application |
 
-## Verification status
+## Status
 
-v0.6 was tested twice on real hardware: LDN scanning, lobby registration
-visible on Switch 2, optional test chat while the connection stayed open, and
-the loader display on Switch 2 after all 19 messages were sent.
+v0.6 was tested twice on real hardware: LDN scanning, lobby registration on Switch 2, the optional test chat with the connection open, and the loader display after all 19 messages.
 
-Interpreting the on-screen results:
+- `Game lobby: JOINED` means the welcome was received and registration frames were sent; verify the player list on Switch 2.
+- `Loader lines sent` only means the local sends completed. The loader display on Switch 2 is the proof that the JavaScript ran.
 
-- `Game lobby: JOINED` means the game welcome was received and registration
-  frames were sent; always verify the player list on Switch 2 as the ground
-  truth.
-- `Loader lines sent` only means the local sends completed. The loader display
-  on Switch 2 is the proof that the JavaScript actually ran.
-
-This release does **not** install a persistent save trigger and does not
-modify game saves. Once the loader is running, use the standard upstream
-CivSwitch tooling if you want persistence.
+This version does not install a persistent save trigger or modify game saves. For persistence, use the upstream CivSwitch tooling once the loader is running.
 
 ## Implementation notes
 
-- The passphrase matches upstream `ldn/connection.py`. Because all LDN
-  cryptography runs inside the Switch OS via native libnx `ldn:u`, this
-  program never needs prod.keys.
-- The sender uses nonblocking UDP reads and paces chat lines at 10 ms each,
-  matching CivSwitchLDN's default. The game handshake is scheduled
-  100/200/400 ms after the welcome packet, with chat eligible at 500 ms.
-- The chat payload is generated from upstream `compress.js` and
-  `payloads/core.js`; the generated lines are embedded in
-  `source/chat_payload.h` and kept in `payload-lines.json`.
-- Source baseline: `safuentees/CivSwitchLDN` commit
-  `9537a9e784dfaa2ed7271dde3ce5148ef59460bb`.
+- The passphrase follows upstream `ldn/connection.py`. LDN cryptography runs inside the Switch OS through libnx `ldn:u`, so prod.keys is not needed.
+- Nonblocking UDP reads; chat lines are paced at 10 ms, matching CivSwitchLDN. The handshake runs 100/200/400 ms after the welcome packet, with chat eligible at 500 ms.
+- The chat payload comes from upstream `compress.js` and `payloads/core.js`; generated lines are embedded in `source/chat_payload.h` and kept in `payload-lines.json`.
+- Source baseline: `safuentees/CivSwitchLDN` at commit `9537a9e784dfaa2ed7271dde3ce5148ef59460bb`.
 
 ## Building from source
 
-Install devkitPro with the `switch-dev` group (devkitA64 and libnx), then run
-`make` in this directory. The output is `civswitch-ldn-nx.nro`.
+Install devkitPro with the `switch-dev` group (devkitA64 and libnx), then run `make`. The output is `civswitch-ldn-nx.nro`.
 
 ## License
 
-This project as a combined work, and all native port code, are licensed under
-**GPL-3.0-only**, consistent with the CivSwitchLDN license. The reused
-CivSwitch exploit components retain Gezine's MIT license; see
-`LICENSES/Gezine-MIT.txt`. The full GPL-3.0 text is in `LICENSE`, and the
-complete source corresponding to every released binary is available in this
-repository.
+This program as a combined application, and the original code in this port, are licensed under the **GNU GPL version 3 only (`GPL-3.0-only`)**. See [LICENSE](LICENSE).
+
+The reused CivSwitch files retain **Gezine's MIT license and copyright**; see [LICENSES/Gezine-MIT.txt](LICENSES/Gezine-MIT.txt). The complete source corresponding to every released binary is available in this repository. The software is provided without warranty; see the license texts for the full terms.
