@@ -1,8 +1,13 @@
 # CivSwitch-LDN-NX
 
-Native Switch 1 homebrew that delivers the CivSwitch JavaScript loader over
-local wireless (LDN). No PC, no `prod.keys` — just a Switch 1 running
-homebrew and a Switch 2 hosting a Civilization VII lobby.
+This is a homebrew application that runs natively on a Switch 1. It sends the
+CivSwitch JavaScript loader to a Switch 2 over local wireless (LDN).
+
+You do not need a computer to run it, and you do not need a `prod.keys` file.
+The only hardware required is:
+
+- a Switch 1 running homebrew, and
+- a Switch 2 hosting a Civilization VII lobby.
 
 ## Lineage
 
