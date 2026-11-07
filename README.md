@@ -3,7 +3,7 @@
 This is a homebrew application that runs natively on a Switch 1. It sends the
 CivSwitch JavaScript loader to a Switch 2 over local wireless (LDN).
 
-You do not need a computer to run it, and you do not need a `prod.keys` file.
+You do not need a computer to run it, and you do not need a prod.keys file.
 The only hardware required is:
 
 - a Switch 1 running homebrew, and
@@ -97,7 +97,7 @@ CivSwitch tooling if you want persistence.
 
 - The passphrase matches upstream `ldn/connection.py`. Because all LDN
   cryptography runs inside the Switch OS via native libnx `ldn:u`, this
-  program never needs `prod.keys`.
+  program never needs prod.keys.
 - The sender uses nonblocking UDP reads and paces chat lines at 10 ms each,
   matching CivSwitchLDN's default. The game handshake is scheduled
   100/200/400 ms after the welcome packet, with chat eligible at 500 ms.
