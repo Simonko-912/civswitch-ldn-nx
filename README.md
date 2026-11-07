@@ -64,6 +64,10 @@ Y sends one optional Civ7-LDN-Hello chat message; it isn't needed to join or sen
 
 ## Status
 
+v0.7 was verified on real hardware in a two-console test. It keeps the v0.6
+timing and adds stricter packet ordering, retransmission handling,
+session-close detection and packet-size checks.
+
 v0.6 was tested twice on real hardware: LDN scanning, lobby registration on Switch 2, the optional test chat with the connection open, and the loader display after all 19 messages.
 
 - Game lobby: JOINED means the welcome was received and registration frames were sent; verify the player list on Switch 2.
@@ -75,6 +79,13 @@ This version does not install a persistent save trigger or modify game saves. Fo
 
 - The passphrase follows upstream ldn/connection.py. LDN cryptography runs inside the Switch OS through libnx ldn:u, so prod.keys is not needed.
 - Nonblocking UDP reads; chat lines are paced at 10 ms, matching CivSwitchLDN. The handshake runs 100/200/400 ms after the welcome packet, with chat eligible at 500 ms.
+- Incoming game packets are ordered by sequence number. Future packets are
+  buffered, missing packets are requested every 500 ms, and sent packets are
+  retained in a 64-entry rolling retransmission cache.
+- After the last chat line, the connection closes after one quiet second. A
+  retransmission restarts that quiet period, with a three-second hard limit.
+- Refused, closed and kicked sessions are reported instead of being shown as a
+  successful loader send.
 - The chat payload comes from upstream compress.js and payloads/core.js; generated lines are embedded in source/chat_payload.h and kept in payload-lines.json.
 - Source baseline: safuentees/CivSwitchLDN at commit 9537a9e784dfaa2ed7271dde3ce5148ef59460bb.
 

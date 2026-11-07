@@ -4,17 +4,23 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <stdint.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <string.h>
 
 #define GAME_PORT 62056
 #define MAX_PACKET 1200
+#define FRAME_HEADER_SIZE 13
+#define MAX_FRAME_PAYLOAD (MAX_PACKET - FRAME_HEADER_SIZE)
 #define MAX_SAVED 64
+#define MAX_PENDING 64
+#define MAX_CHAT_TEXT 1024
 
-// Keep the native sender's protocol timing in sync with CivSwitchLDN.
+// Protocol timing shared with CivSwitchLDN.
 #define RECEIVE_TIMEOUT_US 100000
+#define CONTROL_POLL_NS 10000000ULL
 #define INTRO_RETRY_NS 3000000000ULL
 #define JOIN_TIMEOUT_NS 30000000000ULL
 #define REGISTER_DELAY_NS 100000000ULL
@@ -22,11 +28,44 @@
 #define SNAPSHOT_DELAY_NS 400000000ULL
 #define CHAT_START_DELAY_NS 500000000ULL
 #define CHAT_DELAY_NS 10000000ULL
-#define DELIVERY_GRACE_NS 1000000000ULL
+#define MISSING_RETRY_NS 500000000ULL
+#define DELIVERY_QUIET_NS 1000000000ULL
+#define DELIVERY_MAX_NS 3000000000ULL
 #define KEEPALIVE_NS 5000000000ULL
 
-static u8 saved_packets[MAX_SAVED][MAX_PACKET];
-static size_t saved_sizes[MAX_SAVED];
+#define SPECIAL_SEQUENCE UINT64_MAX
+
+typedef struct {
+    bool used;
+    u64 sequence;
+    size_t size;
+    u8 data[MAX_PACKET];
+} SavedPacket;
+
+typedef struct {
+    bool used;
+    u64 sequence;
+    size_t size;
+    u8 payload[MAX_FRAME_PAYLOAD];
+} PendingPacket;
+
+typedef enum {
+    Event_None,
+    Event_Welcome,
+    Event_Refused,
+    Event_Closed,
+    Event_Kicked,
+    Event_IoError,
+} EventKind;
+
+typedef struct {
+    EventKind kind;
+    u32 slot;
+    int error;
+} PacketEvent;
+
+static SavedPacket saved_packets[MAX_SAVED];
+static PendingPacket pending_packets[MAX_PENDING];
 static int active_fd = -1;
 static bool socket_initialized;
 static struct sockaddr_in active_target;
@@ -35,86 +74,294 @@ static LdnIpv4Address active_local;
 static u32 active_slot;
 static u64 next_sequence;
 static u64 incoming_expected;
+static bool incoming_fresh;
 static u32 next_counter;
+static u64 last_missing_tick;
 static u64 last_keepalive_tick;
+static u64 last_retransmit_tick;
 static u64 chat_start_tick;
 
-static void put32(u8 *p, u32 value) { memcpy(p, &value, 4); }
-static void put64(u8 *p, u64 value) { memcpy(p, &value, 8); }
-static u64 get64(const u8 *p) { u64 value; memcpy(&value, p, 8); return value; }
-static u32 get32(const u8 *p) { u32 value; memcpy(&value, p, 4); return value; }
+static void put32(u8 *p, u32 value) { memcpy(p, &value, sizeof(value)); }
+static void put64(u8 *p, u64 value) { memcpy(p, &value, sizeof(value)); }
+static u64 get64(const u8 *p) { u64 value; memcpy(&value, p, sizeof(value)); return value; }
+static u32 get32(const u8 *p) { u32 value; memcpy(&value, p, sizeof(value)); return value; }
+
+static PacketEvent event_none(void) {
+    return (PacketEvent){Event_None, 0, 0};
+}
+
+static bool event_failed(PacketEvent event) {
+    return event.kind == Event_Refused || event.kind == Event_Closed ||
+           event.kind == Event_Kicked || event.kind == Event_IoError;
+}
+
+static PacketEvent merge_event(PacketEvent current, PacketEvent next) {
+    if (event_failed(next)) return next;
+    if (current.kind == Event_None && next.kind != Event_None) return next;
+    return current;
+}
+
+static GameProbeResult result_from_event(PacketEvent event, u32 detail, u32 slot) {
+    switch (event.kind) {
+        case Event_Refused:
+            return (GameProbeResult){"Game lobby refused the connection", detail, slot, 0, false};
+        case Event_Closed:
+            return (GameProbeResult){"Game lobby closed the connection", detail, slot, 0, false};
+        case Event_Kicked:
+            return (GameProbeResult){"Removed from the game lobby", detail, slot, 0, false};
+        case Event_IoError:
+            return (GameProbeResult){"Game network I/O failed", detail, slot, (u32)event.error, false};
+        default:
+            return (GameProbeResult){"No game network error", detail, slot, 0, false};
+    }
+}
+
+static int send_exact(int fd, const struct sockaddr_in *target,
+                      const u8 *data, size_t size) {
+    ssize_t sent = sendto(fd, data, size, 0,
+                          (const struct sockaddr *)target, sizeof(*target));
+    if (sent < 0) return -1;
+    if ((size_t)sent != size) {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
+static void save_packet(u64 sequence, const u8 *data, size_t size) {
+    SavedPacket *saved = &saved_packets[sequence % MAX_SAVED];
+    saved->used = true;
+    saved->sequence = sequence;
+    saved->size = size;
+    memcpy(saved->data, data, size);
+}
+
+static int resend_saved(int fd, const struct sockaddr_in *target, u64 sequence) {
+    SavedPacket *saved = &saved_packets[sequence % MAX_SAVED];
+    if (!saved->used || saved->sequence != sequence) return 0;
+    if (send_exact(fd, target, saved->data, saved->size) < 0) return -1;
+    last_retransmit_tick = armGetSystemTick();
+    return 1;
+}
 
 static int send_frame(int fd, const struct sockaddr_in *target, LdnIpv4Address host,
                       u64 sequence, const u8 *payload, size_t size) {
+    if (size > MAX_FRAME_PAYLOAD) {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
     u8 packet[MAX_PACKET] = {0};
-    if (size + 13 > sizeof(packet)) return -1;
     memcpy(packet, &host.addr, 4);
     packet[4] = 'F';
     put64(packet + 5, sequence);
-    memcpy(packet + 13, payload, size);
-    size_t packet_size = size + 13;
-    if (sequence < MAX_SAVED) {
-        memcpy(saved_packets[sequence], packet, packet_size);
-        saved_sizes[sequence] = packet_size;
-    }
-    return sendto(fd, packet, packet_size, 0,
-                  (const struct sockaddr *)target, sizeof(*target));
+    memcpy(packet + FRAME_HEADER_SIZE, payload, size);
+    size_t packet_size = size + FRAME_HEADER_SIZE;
+
+    if (send_exact(fd, target, packet, packet_size) < 0) return -1;
+    save_packet(sequence, packet, packet_size);
+    return 0;
 }
 
-static void receive_control(int fd, const struct sockaddr_in *target,
-                            LdnIpv4Address host, LdnIpv4Address local, u64 last_sequence) {
-    // Control traffic must never stall the scheduled chat delivery.
-    for (int i = 0; i < 16; ++i) {
-        u8 reply[256];
-        struct sockaddr_in sender = {0};
-        socklen_t sender_size = sizeof(sender);
-        ssize_t n = recvfrom(fd, reply, sizeof(reply), MSG_DONTWAIT,
-                             (struct sockaddr *)&sender, &sender_size);
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
-        if (n < 5 || sender.sin_addr.s_addr != target->sin_addr.s_addr ||
-            sender.sin_port != target->sin_port || memcmp(reply, &local.addr, 4) != 0) continue;
+static int send_control(int fd, const struct sockaddr_in *target,
+                        LdnIpv4Address host, char kind, u64 sequence) {
+    u8 packet[FRAME_HEADER_SIZE];
+    memcpy(packet, &host.addr, 4);
+    packet[4] = (u8)kind;
+    put64(packet + 5, sequence);
+    return send_exact(fd, target, packet, sizeof(packet));
+}
 
-        if (reply[4] == 'S' && n == 6 && reply[5] == 'P') {
+static void clear_pending(void) {
+    memset(pending_packets, 0, sizeof(pending_packets));
+}
+
+static bool pending_any(void) {
+    for (size_t i = 0; i < MAX_PENDING; ++i) {
+        if (pending_packets[i].used) return true;
+    }
+    return false;
+}
+
+static bool pending_store(u64 sequence, const u8 *payload, size_t size) {
+    PendingPacket *free_slot = NULL;
+    for (size_t i = 0; i < MAX_PENDING; ++i) {
+        PendingPacket *pending = &pending_packets[i];
+        if (pending->used && pending->sequence == sequence) return true;
+        if (!pending->used && free_slot == NULL) free_slot = pending;
+    }
+    if (free_slot == NULL || size > sizeof(free_slot->payload)) return false;
+    free_slot->used = true;
+    free_slot->sequence = sequence;
+    free_slot->size = size;
+    memcpy(free_slot->payload, payload, size);
+    return true;
+}
+
+static PendingPacket *pending_find(u64 sequence) {
+    for (size_t i = 0; i < MAX_PENDING; ++i) {
+        if (pending_packets[i].used && pending_packets[i].sequence == sequence)
+            return &pending_packets[i];
+    }
+    return NULL;
+}
+
+static PacketEvent describe_game_payload(const u8 *payload, size_t size) {
+    if (size >= 8) {
+        u64 marker = get64(payload);
+        if (marker == 0x4669726552465553ULL)
+            return (PacketEvent){Event_Refused, 0, 0};
+        if (marker == 0x46697265b9133ab7ULL)
+            return (PacketEvent){Event_Closed, 0, 0};
+        if (marker == 0x4669726552504c59ULL) {
+            u32 slot = size >= 44 ? get32(payload + 40) : 1;
+            return (PacketEvent){Event_Welcome, slot, 0};
+        }
+    }
+
+    if (size >= 28 && get32(payload + 4) == 1) {
+        u32 kind = get32(payload);
+        if (kind == 0x4b0) {
+            u32 slot = size >= 44 ? get32(payload + 40) : 1;
+            return (PacketEvent){Event_Welcome, slot, 0};
+        }
+        if (kind == 0x4ba) return (PacketEvent){Event_Refused, 0, 0};
+        if (kind == 0x3ec) return (PacketEvent){Event_Kicked, 0, 0};
+    }
+    return event_none();
+}
+
+static PacketEvent process_f_packet(u64 sequence, const u8 *payload, size_t size) {
+    if (sequence == SPECIAL_SEQUENCE) return describe_game_payload(payload, size);
+
+    if (sequence == 0) {
+        incoming_expected = 0;
+        incoming_fresh = false;
+        clear_pending();
+    } else if (incoming_fresh) {
+        incoming_expected = sequence;
+        incoming_fresh = false;
+    }
+
+    if (sequence < incoming_expected) return event_none();
+    if (sequence > incoming_expected) {
+        pending_store(sequence, payload, size);
+        return event_none();
+    }
+
+    PacketEvent event = describe_game_payload(payload, size);
+    incoming_expected++;
+
+    for (;;) {
+        PendingPacket *pending = pending_find(incoming_expected);
+        if (pending == NULL) break;
+        PacketEvent next = describe_game_payload(pending->payload, pending->size);
+        pending->used = false;
+        incoming_expected++;
+        event = merge_event(event, next);
+    }
+    return event;
+}
+
+static PacketEvent process_datagram(int fd, const struct sockaddr_in *target,
+                                    LdnIpv4Address host, LdnIpv4Address local,
+                                    const u8 *reply, size_t size) {
+    if (size < 5 || memcmp(reply, &local.addr, 4) != 0) return event_none();
+
+    char kind = (char)reply[4];
+    if (kind == 'S') {
+        if (size == 6 && reply[5] == 'P') {
             u8 pong[6];
             memcpy(pong, &host.addr, 4);
             pong[4] = 'S';
             pong[5] = 'p';
-            sendto(fd, pong, sizeof(pong), 0, (const struct sockaddr *)target, sizeof(*target));
+            if (send_exact(fd, target, pong, sizeof(pong)) < 0)
+                return (PacketEvent){Event_IoError, 0, errno};
         }
-        if (n >= 13 && reply[4] == 'F') {
-            u64 sequence = get64(reply + 5);
-            if (sequence == 0 || sequence >= incoming_expected)
-                incoming_expected = sequence + 1;
-        }
-        if (n >= 13 && (reply[4] == 'R' || reply[4] == 'V')) {
-            u64 sequence = reply[4] == 'R' ? get64(reply + 5) : last_sequence;
-            if (sequence < MAX_SAVED && saved_sizes[sequence]) {
-                sendto(fd, saved_packets[sequence], saved_sizes[sequence], 0,
-                       (const struct sockaddr *)target, sizeof(*target));
-            }
-        }
+        return event_none();
     }
+
+    if ((kind != 'F' && kind != 'R' && kind != 'V') || size < FRAME_HEADER_SIZE)
+        return event_none();
+
+    u64 sequence = get64(reply + 5);
+    if (kind == 'R') {
+        if (resend_saved(fd, target, sequence) < 0)
+            return (PacketEvent){Event_IoError, 0, errno};
+        return event_none();
+    }
+
+    if (kind == 'V') {
+        u64 last_sequence = next_sequence > 0 ? next_sequence - 1 : 0;
+        if (sequence <= last_sequence && resend_saved(fd, target, last_sequence) < 0)
+            return (PacketEvent){Event_IoError, 0, errno};
+        return event_none();
+    }
+
+    return process_f_packet(sequence, reply + FRAME_HEADER_SIZE,
+                            size - FRAME_HEADER_SIZE);
 }
 
-static void wait_with_control_until(u64 deadline_tick) {
-    while (active_fd >= 0) {
-        receive_control(active_fd, &active_target, active_host, active_local,
-                        next_sequence - 1);
-        u64 now = armGetSystemTick();
-        if (now >= deadline_tick) return;
-        u64 remaining_ns = armTicksToNs(deadline_tick - now);
-        svcSleepThread((s64)remaining_ns);
+static PacketEvent receive_one(int fd, const struct sockaddr_in *target,
+                               LdnIpv4Address host, LdnIpv4Address local,
+                               int flags) {
+    u8 reply[MAX_PACKET];
+    struct sockaddr_in sender = {0};
+    socklen_t sender_size = sizeof(sender);
+    ssize_t size = recvfrom(fd, reply, sizeof(reply), flags,
+                            (struct sockaddr *)&sender, &sender_size);
+    if (size < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            return event_none();
+        return (PacketEvent){Event_IoError, 0, errno};
     }
+    if (sender.sin_addr.s_addr != target->sin_addr.s_addr ||
+        sender.sin_port != target->sin_port)
+        return event_none();
+    return process_datagram(fd, target, host, local, reply, (size_t)size);
 }
 
-static void wait_handshake_until(int fd, const struct sockaddr_in *target,
-                                 LdnIpv4Address host, LdnIpv4Address local,
-                                 u64 last_sequence, u64 deadline_tick) {
+static PacketEvent transport_timers(int fd, const struct sockaddr_in *target,
+                                    LdnIpv4Address host) {
+    u64 now = armGetSystemTick();
+    if (pending_any() && armTicksToNs(now - last_missing_tick) >= MISSING_RETRY_NS) {
+        last_missing_tick = now;
+        if (send_control(fd, target, host, 'R', incoming_expected) < 0)
+            return (PacketEvent){Event_IoError, 0, errno};
+    }
+    if (armTicksToNs(now - last_keepalive_tick) >= KEEPALIVE_NS) {
+        last_keepalive_tick = now;
+        if (send_control(fd, target, host, 'V', incoming_expected) < 0)
+            return (PacketEvent){Event_IoError, 0, errno};
+    }
+    return event_none();
+}
+
+static PacketEvent poll_transport(int fd, const struct sockaddr_in *target,
+                                  LdnIpv4Address host, LdnIpv4Address local) {
+    PacketEvent result = event_none();
+    for (int i = 0; i < 16; ++i) {
+        errno = 0;
+        PacketEvent event = receive_one(fd, target, host, local, MSG_DONTWAIT);
+        result = merge_event(result, event);
+        if (event_failed(result)) return result;
+        if (event.kind == Event_None && (errno == EAGAIN || errno == EWOULDBLOCK))
+            break;
+    }
+    return merge_event(result, transport_timers(fd, target, host));
+}
+
+static PacketEvent wait_until(int fd, const struct sockaddr_in *target,
+                              LdnIpv4Address host, LdnIpv4Address local,
+                              u64 deadline_tick) {
     for (;;) {
-        receive_control(fd, target, host, local, last_sequence);
+        PacketEvent event = poll_transport(fd, target, host, local);
+        if (event_failed(event)) return event;
+
         u64 now = armGetSystemTick();
-        if (now >= deadline_tick) return;
+        if (now >= deadline_tick) return event;
         u64 remaining_ns = armTicksToNs(deadline_tick - now);
+        if (remaining_ns > CONTROL_POLL_NS) remaining_ns = CONTROL_POLL_NS;
         svcSleepThread((s64)remaining_ns);
     }
 }
@@ -134,7 +381,9 @@ static size_t introduction(u8 *out, LdnIpv4Address host) {
     return offset;
 }
 
-static size_t message(u8 *out, u32 type, u32 counter, const u8 *body, size_t length) {
+static bool build_message(u8 *out, size_t capacity, u32 type, u32 counter,
+                          const u8 *body, size_t length, size_t *out_size) {
+    if (capacity < 28 || length > capacity - 28) return false;
     put32(out, type);
     put32(out + 4, 1);
     put32(out + 8, 1);
@@ -143,7 +392,21 @@ static size_t message(u8 *out, u32 type, u32 counter, const u8 *body, size_t len
     put32(out + 20, 1);
     put32(out + 24, counter);
     memcpy(out + 28, body, length);
-    return length + 28;
+    *out_size = length + 28;
+    return true;
+}
+
+static void reset_transport_state(void) {
+    memset(saved_packets, 0, sizeof(saved_packets));
+    clear_pending();
+    next_sequence = 1;
+    incoming_expected = 0;
+    incoming_fresh = true;
+    next_counter = 0;
+    last_missing_tick = armGetSystemTick();
+    last_keepalive_tick = last_missing_tick;
+    last_retransmit_tick = 0;
+    chat_start_tick = 0;
 }
 
 void game_close(void) {
@@ -151,36 +414,31 @@ void game_close(void) {
     active_fd = -1;
     if (socket_initialized) socketExit();
     socket_initialized = false;
-    incoming_expected = 0;
-    chat_start_tick = 0;
-    memset(saved_sizes, 0, sizeof(saved_sizes));
+    reset_transport_state();
 }
 
-void game_poll(void) {
-    if (active_fd < 0) return;
-    receive_control(active_fd, &active_target, active_host, active_local, next_sequence - 1);
-    u64 now = armGetSystemTick();
-    if (armTicksToNs(now - last_keepalive_tick) < KEEPALIVE_NS) return;
-    last_keepalive_tick = now;
-    u8 packet[13];
-    memcpy(packet, &active_host.addr, 4);
-    packet[4] = 'V';
-    put64(packet + 5, incoming_expected);
-    sendto(active_fd, packet, sizeof(packet), 0,
-           (const struct sockaddr *)&active_target, sizeof(active_target));
+bool game_poll(GameProbeResult *result) {
+    if (active_fd < 0) return false;
+    PacketEvent event = poll_transport(active_fd, &active_target,
+                                       active_host, active_local);
+    if (!event_failed(event)) return false;
+    if (result != NULL) *result = result_from_event(event, 0, active_slot);
+    return true;
 }
 
 GameProbeResult game_join(LdnIpv4Address host) {
-    GameProbeResult result = {"No reply from game lobby", 0, 0};
+    GameProbeResult result = {"No reply from game lobby", 0, 0, 0, false};
     game_close();
-    memset(saved_sizes, 0, sizeof(saved_sizes));
+    reset_transport_state();
+
     Result rc = socketInitializeDefault();
-    if (R_FAILED(rc)) return (GameProbeResult){"socketInitialize failed", rc, 0};
+    if (R_FAILED(rc))
+        return (GameProbeResult){"socketInitialize failed", 0, 0, rc, false};
     socket_initialized = true;
 
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
-        result = (GameProbeResult){"socket() failed", (u32)errno, 0};
+        result = (GameProbeResult){"socket() failed", 0, 0, (u32)errno, false};
         goto finish;
     }
 
@@ -188,7 +446,7 @@ GameProbeResult game_join(LdnIpv4Address host) {
     LdnSubnetMask mask;
     rc = ldnGetIpv4Address(&local, &mask);
     if (R_FAILED(rc)) {
-        result = (GameProbeResult){"ldnGetIpv4Address failed", rc, 0};
+        result = (GameProbeResult){"ldnGetIpv4Address failed", 0, 0, rc, false};
         goto close_socket;
     }
 
@@ -197,7 +455,7 @@ GameProbeResult game_join(LdnIpv4Address host) {
     source.sin_port = htons(GAME_PORT);
     source.sin_addr.s_addr = htonl(local.addr);
     if (bind(fd, (const struct sockaddr *)&source, sizeof(source)) < 0) {
-        result = (GameProbeResult){"bind(local LDN IP) failed", (u32)errno, 0};
+        result = (GameProbeResult){"bind(local LDN IP) failed", 0, 0, (u32)errno, false};
         goto close_socket;
     }
 
@@ -206,96 +464,110 @@ GameProbeResult game_join(LdnIpv4Address host) {
     target.sin_port = htons(GAME_PORT);
     target.sin_addr.s_addr = htonl(host.addr);
     struct timeval timeout = {.tv_sec = 0, .tv_usec = RECEIVE_TIMEOUT_US};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        result = (GameProbeResult){"setsockopt timeout failed", 0, 0, (u32)errno, false};
+        goto close_socket;
+    }
 
     u8 intro[180] = {0};
     size_t intro_size = introduction(intro, host);
-    u8 reply[512];
     u64 join_start_tick = armGetSystemTick();
     u64 join_deadline_tick = join_start_tick + armNsToTicks(JOIN_TIMEOUT_NS);
     u64 next_intro_tick = join_start_tick;
     int attempts = 0;
+    PacketEvent welcome = event_none();
+
     while (armGetSystemTick() < join_deadline_tick) {
         u64 now = armGetSystemTick();
         if (attempts < 3 && now >= next_intro_tick) {
             if (send_frame(fd, &target, host, 0, intro, intro_size) < 0) {
-                result = (GameProbeResult){"send(FireCONN) failed", (u32)errno, 0};
+                result = (GameProbeResult){"send(FireCONN) failed", 0, 0, (u32)errno, false};
                 goto close_socket;
             }
             attempts++;
             next_intro_tick = join_start_tick + armNsToTicks(INTRO_RETRY_NS * attempts);
         }
-        struct sockaddr_in sender = {0};
-        socklen_t sender_size = sizeof(sender);
-        ssize_t n = recvfrom(fd, reply, sizeof(reply), 0,
-                             (struct sockaddr *)&sender, &sender_size);
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) continue;
-            result = (GameProbeResult){"recvfrom failed", (u32)errno, 0};
+
+        PacketEvent event = receive_one(fd, &target, host, local, 0);
+        if (event_failed(event)) {
+            result = result_from_event(event, 0, 0);
             goto close_socket;
         }
-        if (sender.sin_addr.s_addr != target.sin_addr.s_addr ||
-            sender.sin_port != target.sin_port || n < 21 ||
-            memcmp(reply, &local.addr, 4) != 0 || reply[4] != 'F') continue;
-
-        u8 *body = reply + 13;
-        size_t body_size = (size_t)n - 13;
-        if (get64(body) == 0x4669726552465553ULL ||
-            get64(body) == 0x46697265b9133ab7ULL) {
-            result = (GameProbeResult){"Game lobby refused/closed", 0, 0};
+        if (event.kind == Event_Welcome) {
+            welcome = event;
+            break;
+        }
+        event = transport_timers(fd, &target, host);
+        if (event_failed(event)) {
+            result = result_from_event(event, 0, 0);
             goto close_socket;
         }
-        if (get64(body) != 0x4669726552504c59ULL &&
-            !(body_size >= 28 && get32(body) == 0x4b0)) continue;
-
-        u32 slot = body_size >= 44 ? get32(body + 40) : 1;
-        result = (GameProbeResult){"Game welcome received", 0, slot};
-        u64 welcome_tick = armGetSystemTick();
-        incoming_expected = get64(reply + 5) + 1;
-
-        u8 packet[64] = {0};
-        u8 register_body[16] = {0};
-        put32(register_body, 5);
-        memcpy(register_body + 4, "1.0.0", 5);
-        wait_handshake_until(fd, &target, host, local, 0,
-                             welcome_tick + armNsToTicks(REGISTER_DELAY_NS));
-        size_t size = message(packet, 0x4b8, 0, register_body, 9);
-        if (send_frame(fd, &target, host, 1, packet, size) < 0) {
-            result = (GameProbeResult){"NetRegister send failed", (u32)errno, slot};
-            break;
-        }
-
-        u8 app_body[5] = {0};
-        put32(app_body, slot);
-        wait_handshake_until(fd, &target, host, local, 1,
-                             welcome_tick + armNsToTicks(APP_REGISTER_DELAY_NS));
-        size = message(packet, 0x4b9, 1, app_body, sizeof(app_body));
-        if (send_frame(fd, &target, host, 2, packet, size) < 0) {
-            result = (GameProbeResult){"NetAppRegister send failed", (u32)errno, slot};
-            break;
-        }
-
-        u8 snapshot_body[5] = {0};
-        snapshot_body[4] = 1;
-        wait_handshake_until(fd, &target, host, local, 2,
-                             welcome_tick + armNsToTicks(SNAPSHOT_DELAY_NS));
-        size = message(packet, 0x4e9, 2, snapshot_body, sizeof(snapshot_body));
-        if (send_frame(fd, &target, host, 3, packet, size) < 0) {
-            result = (GameProbeResult){"Snapshot send failed", (u32)errno, slot};
-            break;
-        }
-        active_fd = fd;
-        active_target = target;
-        active_host = host;
-        active_local = local;
-        active_slot = slot;
-        next_sequence = 4;
-        next_counter = 3;
-        chat_start_tick = welcome_tick + armNsToTicks(CHAT_START_DELAY_NS);
-        last_keepalive_tick = join_start_tick;
-        result = (GameProbeResult){"Game lobby joined", 0, slot, true};
-        return result;
     }
+
+    if (welcome.kind != Event_Welcome) goto close_socket;
+
+    u32 slot = welcome.slot;
+    u64 welcome_tick = armGetSystemTick();
+    u8 packet[64] = {0};
+    size_t size = 0;
+
+    u8 register_body[16] = {0};
+    put32(register_body, 5);
+    memcpy(register_body + 4, "1.0.0", 5);
+    PacketEvent event = wait_until(fd, &target, host, local,
+                                   welcome_tick + armNsToTicks(REGISTER_DELAY_NS));
+    if (event_failed(event)) {
+        result = result_from_event(event, 0, slot);
+        goto close_socket;
+    }
+    if (!build_message(packet, sizeof(packet), 0x4b8, 0,
+                       register_body, 9, &size) ||
+        send_frame(fd, &target, host, 1, packet, size) < 0) {
+        result = (GameProbeResult){"NetRegister send failed", 0, slot, (u32)errno, false};
+        goto close_socket;
+    }
+    next_sequence = 2;
+
+    u8 app_body[5] = {0};
+    put32(app_body, slot);
+    event = wait_until(fd, &target, host, local,
+                       welcome_tick + armNsToTicks(APP_REGISTER_DELAY_NS));
+    if (event_failed(event)) {
+        result = result_from_event(event, 0, slot);
+        goto close_socket;
+    }
+    if (!build_message(packet, sizeof(packet), 0x4b9, 1,
+                       app_body, sizeof(app_body), &size) ||
+        send_frame(fd, &target, host, 2, packet, size) < 0) {
+        result = (GameProbeResult){"NetAppRegister send failed", 0, slot, (u32)errno, false};
+        goto close_socket;
+    }
+    next_sequence = 3;
+
+    u8 snapshot_body[5] = {0};
+    snapshot_body[4] = 1;
+    event = wait_until(fd, &target, host, local,
+                       welcome_tick + armNsToTicks(SNAPSHOT_DELAY_NS));
+    if (event_failed(event)) {
+        result = result_from_event(event, 0, slot);
+        goto close_socket;
+    }
+    if (!build_message(packet, sizeof(packet), 0x4e9, 2,
+                       snapshot_body, sizeof(snapshot_body), &size) ||
+        send_frame(fd, &target, host, 3, packet, size) < 0) {
+        result = (GameProbeResult){"Snapshot send failed", 0, slot, (u32)errno, false};
+        goto close_socket;
+    }
+
+    active_fd = fd;
+    active_target = target;
+    active_host = host;
+    active_local = local;
+    active_slot = slot;
+    next_sequence = 4;
+    next_counter = 3;
+    chat_start_tick = welcome_tick + armNsToTicks(CHAT_START_DELAY_NS);
+    return (GameProbeResult){"Game lobby joined", 0, slot, 0, true};
 
 close_socket:
     close(fd);
@@ -305,40 +577,71 @@ finish:
     return result;
 }
 
+static PacketEvent wait_for_delivery_quiet(u64 last_chat_tick) {
+    u64 hard_deadline = last_chat_tick + armNsToTicks(DELIVERY_MAX_NS);
+    for (;;) {
+        PacketEvent event = poll_transport(active_fd, &active_target,
+                                           active_host, active_local);
+        if (event_failed(event)) return event;
+
+        u64 quiet_start = last_chat_tick;
+        if (last_retransmit_tick > quiet_start) quiet_start = last_retransmit_tick;
+        u64 now = armGetSystemTick();
+        if (now >= quiet_start + armNsToTicks(DELIVERY_QUIET_NS) ||
+            now >= hard_deadline)
+            return event_none();
+        svcSleepThread((s64)CONTROL_POLL_NS);
+    }
+}
+
 GameProbeResult game_send(bool send_loader,
                           void (*on_progress)(unsigned sent, unsigned total)) {
-    if (active_fd < 0) return (GameProbeResult){"Join the game with A first", 0, 0};
+    if (active_fd < 0)
+        return (GameProbeResult){"Join the game with A first", 0, 0, 0, false};
+
     unsigned count = send_loader ? chat_payload_count : 1;
-    GameProbeResult result = {"No chat sent", 0, active_slot};
     u64 first_chat_tick = armGetSystemTick();
     u64 last_chat_tick = 0;
     if (chat_start_tick > first_chat_tick) first_chat_tick = chat_start_tick;
 
     for (unsigned i = 0; i < count; ++i) {
-        wait_with_control_until(first_chat_tick + armNsToTicks(CHAT_DELAY_NS * i));
+        PacketEvent event = wait_until(active_fd, &active_target, active_host, active_local,
+                                       first_chat_tick + armNsToTicks(CHAT_DELAY_NS * i));
+        if (event_failed(event)) return result_from_event(event, i, active_slot);
+
         const char *chat_text = send_loader ? chat_payload_lines[i] : "Civ7-LDN-Hello";
         size_t text_size = strlen(chat_text);
-        u8 chat_body[1040] = {0};
-        u8 packet_body[1080] = {0};
+        if (text_size > MAX_CHAT_TEXT)
+            return (GameProbeResult){"Chat line exceeds safe packet size", i,
+                                     active_slot, EMSGSIZE, false};
+
+        u8 chat_body[MAX_CHAT_TEXT + 16] = {0};
+        u8 packet_body[MAX_FRAME_PAYLOAD] = {0};
         put32(chat_body, active_slot);
-        put32(chat_body + 4, text_size);
+        put32(chat_body + 4, (u32)text_size);
         memcpy(chat_body + 8, chat_text, text_size);
         put32(chat_body + 8 + text_size, 0xfffffffe);
         put32(chat_body + 12 + text_size, 0xffffffff);
-        size_t size = message(packet_body, 0x3f3, next_counter, chat_body, 16 + text_size);
+
+        size_t packet_size = 0;
+        if (!build_message(packet_body, sizeof(packet_body), 0x3f3, next_counter,
+                           chat_body, 16 + text_size, &packet_size))
+            return (GameProbeResult){"Chat packet build failed", i,
+                                     active_slot, EMSGSIZE, false};
         if (send_frame(active_fd, &active_target, active_host, next_sequence,
-                       packet_body, size) < 0) {
-            result = (GameProbeResult){"Chat send failed", (u32)errno, active_slot};
-            return result;
-        }
+                       packet_body, packet_size) < 0)
+            return (GameProbeResult){"Chat send failed", i,
+                                     active_slot, (u32)errno, false};
+
         last_chat_tick = armGetSystemTick();
         next_counter++;
         next_sequence++;
-        result = (GameProbeResult){send_loader ? "Loader lines sent; check S2" :
-                                   "Test chat sent; check S2", i + 1, active_slot};
         if (on_progress) on_progress(i + 1, count);
     }
-    wait_with_control_until(last_chat_tick + armNsToTicks(DELIVERY_GRACE_NS));
-    result.completed = true;
-    return result;
+
+    PacketEvent event = wait_for_delivery_quiet(last_chat_tick);
+    if (event_failed(event)) return result_from_event(event, count, active_slot);
+    return (GameProbeResult){send_loader ? "Loader lines sent; check S2" :
+                             "Test chat sent; check S2",
+                             count, active_slot, 0, true};
 }

@@ -66,9 +66,29 @@ static void print_ip(LdnIpv4Address addr) {
            (ip >> 8) & 255, ip & 255);
 }
 
+static const char *network_problem(const LdnNetworkInfo *network) {
+    if (network->node_count == 0 || network->node_count > 8)
+        return "Selected LDN network has no valid host";
+    if (network->node_count_max <= 0 || network->node_count_max > 8)
+        return "Selected LDN network has invalid capacity";
+    if (network->node_count >= (u8)network->node_count_max)
+        return "Selected LDN network is full";
+    if (network->station_accept_policy == LdnAcceptPolicy_AlwaysReject)
+        return "Selected LDN network rejects new players";
+    if (network->nodes[0].local_communication_version < 0)
+        return "Selected LDN network has invalid game version";
+    return NULL;
+}
+
 static void connect_selected(void) {
     if (!station_open || network_count == 0 || connected) return;
     LdnNetworkInfo *network = &networks[selected];
+    const char *problem = network_problem(network);
+    if (problem != NULL) {
+        game_result = (GameProbeResult){problem, 0, 0, 0, false};
+        game_tested = true;
+        return;
+    }
 
     // The passphrase is the game's LDN value from CivSwitchLDN, not prod.keys.
     static const u8 passphrase[] = {
@@ -95,7 +115,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v0.6\n");
+    printf("CivSwitch LDN NX v0.7\n");
     printf("A join lobby  Y hello  R loader\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
@@ -104,10 +124,14 @@ static void draw(void) {
         printf("Selected %d/%d (Up/Down)\n", selected + 1, network_count);
         printf("Application ID: %016llX\n", (unsigned long long)network->network_id.intent_id.local_communication_id);
         printf("Scene: %u  Channel: %d\n", network->network_id.intent_id.scene_id, network->common.channel);
-        printf("LDN version: %u  Game version: %d\n", network->version,
-               network->nodes[0].local_communication_version);
-        printf("Host: ");
-        print_ip(network->nodes[0].ip_addr);
+        if (network->node_count > 0) {
+            printf("LDN version: %u  Game version: %d\n", network->version,
+                   network->nodes[0].local_communication_version);
+            printf("Host: ");
+            print_ip(network->nodes[0].ip_addr);
+        } else {
+            printf("LDN version: %u  Host unavailable", network->version);
+        }
         printf("\nPlayers: %d/%d\n", network->node_count, network->node_count_max);
     }
     if (connected) {
@@ -123,6 +147,7 @@ static void draw(void) {
         printf("Game: %s\n", game_result.message);
         printf("Game slot: %u\n", game_result.slot);
         if (game_result.detail) printf("Chat lines sent: %u\n", game_result.detail);
+        if (game_result.error_code) printf("Error code: 0x%08X\n", game_result.error_code);
         if (game_joined && !game_result.detail)
             printf("Check new player on S2. Y optional.\n");
         if (!connected && game_result.completed)
@@ -168,12 +193,13 @@ int main(int argc, char **argv) {
         }
         if ((keys & HidNpadButton_Y) && game_joined) {
             game_result = game_send(false, show_progress);
+            if (!game_result.completed) close_station();
             game_tested = true;
             redraw = true;
         }
         if ((keys & HidNpadButton_R) && game_joined) {
             game_result = game_send(true, show_progress);
-            if (game_result.completed) close_station();
+            close_station();
             game_tested = true;
             redraw = true;
         }
@@ -196,7 +222,15 @@ int main(int argc, char **argv) {
                 redraw = true;
             }
         }
-        if (game_joined) game_poll();
+        if (game_joined) {
+            GameProbeResult poll_result;
+            if (game_poll(&poll_result)) {
+                game_result = poll_result;
+                close_station();
+                game_tested = true;
+                redraw = true;
+            }
+        }
         if (redraw) {
             draw();
             redraw = false;
