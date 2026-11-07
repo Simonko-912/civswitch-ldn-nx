@@ -76,8 +76,8 @@ return to LDN scanning and try again.
   emits `INSTALL DONE` following its savedata commit.
 
 The v0.8 NRO builds successfully and its generated payload passes upstream's
-offline decompress/round-trip check. The full loader-to-save path still requires
-a two-console hardware test before it should be called release-verified.
+offline decompress/round-trip check. The full loader-to-save path was verified
+on real hardware in a two-console test.
 
 ## Building
 
