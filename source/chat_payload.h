@@ -1,4 +1,4 @@
-// Generated from safuentees/CivSwitchLDN payloads/core.js (Gezine MIT) via compress.js.
+// Generated from ItsNerisma/CivSwitchLDN payloads/core.js (Gezine MIT) via compress.js.
 #ifndef CIVSWITCH_CHAT_PAYLOAD_H
 #define CIVSWITCH_CHAT_PAYLOAD_H
 static const char *const chat_payload_lines[] = {

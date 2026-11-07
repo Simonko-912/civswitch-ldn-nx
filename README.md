@@ -87,7 +87,7 @@ This version does not install a persistent save trigger or modify game saves. Fo
 - Refused, closed and kicked sessions are reported instead of being shown as a
   successful loader send.
 - The chat payload comes from upstream compress.js and payloads/core.js; generated lines are embedded in source/chat_payload.h and kept in payload-lines.json.
-- Source baseline: safuentees/CivSwitchLDN at commit 9537a9e784dfaa2ed7271dde3ce5148ef59460bb.
+- Source baseline: ItsNerisma/CivSwitchLDN at commit 9537a9e784dfaa2ed7271dde3ce5148ef59460bb.
 
 ## Building from source
 
