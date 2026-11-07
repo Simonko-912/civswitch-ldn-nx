@@ -11,8 +11,6 @@ The only hardware required is:
 
 ## Lineage
 
-This is an independent native port rather than a GitHub fork:
-
 - **[ItsNerisma/CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN)**
   (GPL-3.0-only) — the direct baseline; it delivers the same loader from a
   Linux PC over LDN.
