@@ -3,6 +3,10 @@
 > [!IMPORTANT]
 > **[CivSwitch](https://github.com/Gezine/CivSwitch) is an exploit by [Gezine](https://github.com/Gezine).** This program delivers it from a Switch 1 over local wireless (LDN), instead of from a Linux PC like [CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN). It is a Switch homebrew program in the nro format and does not need a prod.keys file.
 
+## Demo
+
+https://github.com/user-attachments/assets/82cc269c-7c35-4192-8637-be4c090ea89f
+
 ## Lineage
 
 - **[ItsNerisma/CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN)** (GPL-3.0-only) — direct baseline; it delivers the same loader from a Linux PC over LDN.
