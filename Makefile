@@ -40,11 +40,11 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET		:=	civswitch-ldn-nx
 BUILD		:=	build
 SOURCES		:=	source
-DATA		:=	
+DATA		:=	data
 INCLUDES	:=	
 APP_TITLE	:=	CivSwitch LDN NX
 APP_AUTHOR	:=	xiaolizi23
-APP_VERSION	:=	0.7.0
+APP_VERSION	:=	0.8.0
 #ROMFS	:=	romfs
 
 #---------------------------------------------------------------------------------

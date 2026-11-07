@@ -1,7 +1,9 @@
 #include <switch.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <string.h>
 #include "game_probe.h"
+#include "installer.h"
 
 // This build tests native LDN and the Civilization VII Remote JS Loader bootstrap.
 #define MAX_NETWORKS 24
@@ -12,15 +14,29 @@ static int selected;
 static bool connected;
 static bool game_joined;
 static bool station_open;
+static bool ldn_initialized;
 static Result last_result;
 static const char *last_operation = "Ready";
 static GameProbeResult game_result;
 static bool game_tested;
+static InstallerResult install_result;
+static bool install_tested;
 
 static void show_progress(unsigned sent, unsigned total) {
     consoleClear();
     printf("Sending game chat: %u/%u\n", sent, total);
     printf("Keep the Switch 2 lobby open.\n");
+    consoleUpdate(NULL);
+}
+
+static void show_install_progress(const char *message, unsigned step,
+                                  unsigned total) {
+    consoleClear();
+    printf("CivSwitch LDN NX v0.8 - one-click save\n\n");
+    printf("%s\n", message);
+    if (total) printf("Progress: %u/%u\n", step, total);
+    printf("\nDo not close the game or either console.\n");
+    printf("This replaces Civilization VII single-player saves.\n");
     consoleUpdate(NULL);
 }
 
@@ -62,6 +78,12 @@ static void scan_networks(void) {
 
 static void print_ip(LdnIpv4Address addr) {
     u32 ip = addr.addr;
+    printf("%u.%u.%u.%u", (ip >> 24) & 255, (ip >> 16) & 255,
+           (ip >> 8) & 255, ip & 255);
+}
+
+static void print_wifi_ip(u32 network_order_ip) {
+    u32 ip = ntohl(network_order_ip);
     printf("%u.%u.%u.%u", (ip >> 24) & 255, (ip >> 16) & 255,
            (ip >> 8) & 255, ip & 255);
 }
@@ -115,8 +137,8 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v0.7\n");
-    printf("A join lobby  Y hello  R loader\n\n");
+    printf("CivSwitch LDN NX v0.8\n");
+    printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
     if (network_count > 0) {
@@ -153,8 +175,22 @@ static void draw(void) {
         if (!connected && game_result.completed)
             printf("LDN closed. Check the Switch 2 loader.\n");
     }
+    if (install_tested) {
+        printf("\nSave installer: %s\n", install_result.message);
+        if (install_result.console_ip) {
+            printf("Switch 2: ");
+            print_wifi_ip(install_result.console_ip);
+            printf(":9026\n");
+        }
+        if (install_result.error_code)
+            printf("Installer error: 0x%08X\n", install_result.error_code);
+        if (install_result.completed)
+            printf("DONE: reboot S2, then choose Load Game.\n");
+    }
     printf("\nUp/Down select  X scan  A join lobby\n");
-    printf("Y optional test  R loader  B leave  + exit\n");
+    printf("Y test  R loader only  ZR replace saves\n");
+    printf("WARNING: ZR deletes all single-player saves.\n");
+    printf("B leave  + exit\n");
     consoleUpdate(NULL);
 }
 
@@ -168,8 +204,8 @@ int main(int argc, char **argv) {
 
     Result rc = ldnInitialize(LdnServiceType_User);
     report("ldnInitialize(ldn:u)", rc);
-    bool initialized = R_SUCCEEDED(rc);
-    if (initialized) scan_networks();
+    ldn_initialized = R_SUCCEEDED(rc);
+    if (ldn_initialized) scan_networks();
 
     bool redraw = true;
     while (appletMainLoop()) {
@@ -182,12 +218,13 @@ int main(int argc, char **argv) {
             redraw = true;
         }
         if (keys & HidNpadButton_X) {
-            if (initialized) scan_networks();
+            install_tested = false;
+            if (ldn_initialized) scan_networks();
             else {
                 rc = ldnInitialize(LdnServiceType_User);
                 report("ldnInitialize(ldn:u)", rc);
-                initialized = R_SUCCEEDED(rc);
-                if (initialized) scan_networks();
+                ldn_initialized = R_SUCCEEDED(rc);
+                if (ldn_initialized) scan_networks();
             }
             redraw = true;
         }
@@ -201,6 +238,23 @@ int main(int argc, char **argv) {
             game_result = game_send(true, show_progress);
             close_station();
             game_tested = true;
+            redraw = true;
+        }
+        if ((keys & HidNpadButton_ZR) && game_joined) {
+            game_result = game_send(true, show_progress);
+            bool loader_sent = game_result.completed;
+            close_station();
+            game_tested = true;
+            install_tested = false;
+            if (ldn_initialized) {
+                ldnExit();
+                ldn_initialized = false;
+            }
+            network_count = 0;
+            if (loader_sent) {
+                install_result = installer_run(show_install_progress);
+                install_tested = true;
+            }
             redraw = true;
         }
         if (!game_joined && network_count > 0) {
@@ -238,7 +292,7 @@ int main(int argc, char **argv) {
         svcSleepThread(20 * 1000 * 1000);
     }
     close_station();
-    if (initialized) ldnExit();
+    if (ldn_initialized) ldnExit();
     consoleExit(NULL);
     return 0;
 }

@@ -4,3 +4,5 @@ build/
 *.nacp
 *.nro
 .DS_Store
+installer/node_modules/
+installer/__pycache__/
