@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:20260219
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build NRO
+        run: make
+        env:
+          DEVKITPRO: /opt/devkitpro
+
+      - name: Verify NRO
+        run: |
+          test -f civswitch-ldn-nx.nro
+          ls -la civswitch-ldn-nx.nro
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nro
+          path: civswitch-ldn-nx.nro
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nro
+
+      - name: Create release and upload NRO
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -la civswitch-ldn-nx.nro
+          cat > notes.md <<'EOF'
+          ## Logo release
+
+          Adds the project logo. The homebrew functionality is unchanged from v0.8.
+
+          - The logo is embedded as the homebrew application icon, so it shows in
+            the Switch homebrew menu and album
+          - The same logo is displayed at the top of the README
+          - No functional changes; the one-button persistent-save installer and
+            all v0.7 transport hardening are carried over unchanged
+
+          The NRO is built in CI from the tagged source with devkitPro.
+          EOF
+          gh release create "$TAG" civswitch-ldn-nx.nro \
+            --title "CivSwitch-LDN-NX $TAG" \
+            --notes-file notes.md

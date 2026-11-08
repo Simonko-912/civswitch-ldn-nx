@@ -1,10 +1,18 @@
-# CivSwitch-LDN-NX v0.8
+# CivSwitch-LDN-NX v0.9
+
+<p align="center">
+  <img src="logo.png" alt="CivSwitch-LDN-NX logo" width="220">
+</p>
 
 > [!IMPORTANT]
 > [CivSwitch](https://github.com/Gezine/CivSwitch) is an exploit by
 > [Gezine](https://github.com/Gezine). This program delivers it from a
 > Switch 1 over local wireless (LDN), instead of from a Linux PC like
 > [CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN).
+
+v0.9 adds the project logo: it is now embedded as the homebrew application
+icon and shown at the top of this README. The homebrew functionality itself is
+unchanged from v0.8.
 
 v0.8 adds a one-button persistent-save installer. After the Switch 1 joins the
 Civilization VII wireless lobby, pressing **ZR** sends the Remote JS Loader,
