@@ -11,6 +11,10 @@ Civilization VII wireless lobby, pressing **ZR** sends the Remote JS Loader,
 restores normal Wi-Fi, finds the Switch 2 on the LAN, uploads the bundled save
 template and writes `XSTRIG.Civ7Save` automatically.
 
+## Demo
+
+https://github.com/user-attachments/assets/9b8acf39-8e5a-4d36-a307-a0bdff474577
+
 ## Critical save warning
 
 **The ZR operation deletes every Civilization VII single-player save and
