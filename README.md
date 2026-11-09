@@ -68,8 +68,9 @@ Python and Node.js are not required when using the built NRO.
 ## One-click persistent install
 
 1. Back up any Civilization VII single-player saves you want to keep.
-2. On Switch 2, confirm that the Wi-Fi/LAN network used by both consoles has
-   **"Join this network automatically"** enabled.
+2. On both consoles, confirm that the same Wi-Fi/LAN network is already saved.
+   On Switch 2, make sure **"Join this network automatically"** is enabled for
+   that network.
 3. On Switch 2, open **MULTIPLAYER > WIRELESS > CREATE GAME > HOST LOBBY**.
 4. On Switch 1, open the Album and launch `civswitch-ldn-nx.nro`. Alternatively,
    use Civilization VII as the title override. Press **X** to rescan if needed,
