@@ -36,7 +36,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.0 - one-click save\n\n");
+    printf("CivSwitch LDN NX v1.1.0 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -56,7 +56,7 @@ static void report(const char *operation, Result result) {
 static void guard_block(PadState *pad) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.0\n\n");
+        printf("CivSwitch LDN NX v1.1.0\n\n");
         printf("BLOCKED: ldn_mitm plugin detected\n\n");
         printf("ldn_mitm is intercepting the local\n");
         printf("wireless service. This app needs real\n");
@@ -69,6 +69,37 @@ static void guard_block(PadState *pad) {
         printf("   atmosphere/contents/4200000000000010\n");
         printf("2. Reboot the console.\n");
         printf("3. Start this app again.\n\n");
+        printf("Press + or B to exit.\n");
+        consoleUpdate(NULL);
+
+        padUpdate(pad);
+        u64 keys = padGetButtonsDown(pad);
+        if (keys & (HidNpadButton_Plus | HidNpadButton_B)) return;
+        svcSleepThread(20 * 1000 * 1000);
+    }
+}
+
+// Application mode (hold-R title override) can scan rooms but the game-level
+// handshake never reaches the host, so joining always fails - except when the
+// overridden title is Civilization VII itself. Warn and stop in every other
+// case. Returns only when the user chooses exit.
+static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
+    for (;;) {
+        consoleClear();
+        printf("CivSwitch LDN NX v1.1.0\n\n");
+        printf("PLEASE USE APPLET MODE\n\n");
+        printf("This app is running in application\n");
+        printf("mode (hold-R title override). In\n");
+        printf("this mode rooms can be scanned but\n");
+        printf("the game handshake cannot reach\n");
+        printf("the host, so joining fails.\n\n");
+        printf("Please start it from the Album\n");
+        printf("(applet mode) instead.\n\n");
+        if (guard->title_available)
+            printf("Host title: %016llX\n",
+                   (unsigned long long)guard->host_title_id);
+        printf("Overriding Civilization VII\n");
+        printf("itself is allowed.\n\n");
         printf("Press + or B to exit.\n");
         consoleUpdate(NULL);
 
@@ -192,7 +223,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.0\n");
+    printf("CivSwitch LDN NX v1.1.0\n");
     printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
@@ -271,6 +302,14 @@ int main(int argc, char **argv) {
     LdnGuardInfo guard = ldn_guard_check();
     if (guard.mitm_present) {
         guard_block(&pad);
+        consoleExit(NULL);
+        return 0;
+    }
+
+    // Application mode only works when overriding Civilization VII. For any
+    // other host title, stop before LDN is initialised and ask for applet mode.
+    if (guard.app_mode && !guard.is_civilization_vii) {
+        app_mode_block(&pad, &guard);
         consoleExit(NULL);
         return 0;
     }

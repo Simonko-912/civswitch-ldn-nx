@@ -6,6 +6,11 @@
 typedef struct {
     bool detection_available; ///< The Atmosphere SM MITM query could be performed.
     bool mitm_present;        ///< A MITM is installed on ldn:u (e.g. ldn_mitm running).
+
+    bool app_mode;            ///< Running as a hold-R title-overridden application, not the Album.
+    bool title_available;     ///< The host application program ID was retrieved.
+    u64 host_title_id;        ///< Program ID of the overridden title (application mode only).
+    bool is_civilization_vii; ///< The overridden title is Civilization VII itself.
 } LdnGuardInfo;
 
 /// Inspects the runtime environment before LDN is initialised.

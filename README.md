@@ -1,4 +1,4 @@
-# CivSwitch-LDN-NX v1.0
+# CivSwitch-LDN-NX v1.1.0
 
 <p align="center">
   <img src="logo.png" alt="CivSwitch-LDN-NX logo" width="220">
@@ -17,6 +17,12 @@
 > consoles, and can crash Atmosphere. On startup the app detects a MITM and
 > hard-blocks with removal instructions; it does not run until the module is
 > gone and the console has been rebooted.
+
+v1.1.0 adds a launch-mode guard. When the app is started in application mode
+(hold-R title override), it reads the host title through pm:dmnt and continues
+only for Civilization VII; any other title, or one that cannot be identified,
+shows a blocking screen asking the user to launch from the Album (applet mode).
+The Album and Civilization VII override paths are unchanged.
 
 v1.0 adds an ldn_mitm environment guard. At startup the app checks whether the
 `ldn:u` service has a MITM. If it does, the app shows a blocking screen with
