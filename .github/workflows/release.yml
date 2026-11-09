@@ -52,15 +52,14 @@ jobs:
         run: |
           ls -la civswitch-ldn-nx.nro
           cat > notes.md <<'EOF'
-          ## Logo release
+          ## In-app version label fix
 
-          Adds the project logo. The homebrew functionality is unchanged from v0.8.
+          Fixes the version label shown inside the running homebrew.
 
-          - The logo is embedded as the homebrew application icon, so it shows in
-            the Switch homebrew menu and album
-          - The same logo is displayed at the top of the README
+          - The in-app header now reports v0.9.1; v0.9 still displayed v0.8 on
+            screen even though the album/preview metadata was correct
           - No functional changes; the one-button persistent-save installer and
-            all v0.7 transport hardening are carried over unchanged
+            the project logo from v0.9 are unchanged
 
           The NRO is built in CI from the tagged source with devkitPro.
           EOF

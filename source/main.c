@@ -32,7 +32,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v0.8 - one-click save\n\n");
+    printf("CivSwitch LDN NX v0.9.1 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -137,7 +137,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v0.8\n");
+    printf("CivSwitch LDN NX v0.9.1\n");
     printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);

@@ -1,4 +1,4 @@
-# CivSwitch-LDN-NX v0.9
+# CivSwitch-LDN-NX v0.9.1
 
 <p align="center">
   <img src="logo.png" alt="CivSwitch-LDN-NX logo" width="220">
@@ -9,6 +9,9 @@
 > [Gezine](https://github.com/Gezine). This program delivers it from a
 > Switch 1 over local wireless (LDN), instead of from a Linux PC like
 > [CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN).
+
+v0.9.1 fixes the in-app version label: the running program now reports v0.9.1
+instead of v0.8. There are no functional changes.
 
 v0.9 adds the project logo: it is now embedded as the homebrew application
 icon and shown at the top of this README. The homebrew functionality itself is
