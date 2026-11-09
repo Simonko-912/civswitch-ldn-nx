@@ -93,24 +93,6 @@ return to LDN scanning and try again.
 | B | Leave the lobby |
 | + | Exit |
 
-## v0.8 implementation
-
-- Carries forward the v0.7 transport hardening: ordered receive buffering,
-  missing-packet requests, a rolling retransmission cache, quiet-period delivery
-  confirmation, packet-size checks and explicit refused/closed/kicked errors.
-- Embeds Gezine's `save_template.bin` and the persistent installer logic used by
-  CivSwitch and CivSwitchLDN.
-- Restores Wi-Fi through `nifm:u`, scans a local subnet of at most 512 addresses
-  for a verified Remote JS Loader on TCP 9026, and does not rely on a fixed IP.
-- Base64-encodes the template on the Switch 1 and sends it in four chunks under
-  the loader's 500 KiB per-connection limit.
-- Verifies every loader response and reports success only after the Switch 2
-  emits `INSTALL DONE` following its savedata commit.
-
-The v0.8 NRO builds successfully and its generated payload passes upstream's
-offline decompress/round-trip check. The full loader-to-save path was verified
-on real hardware in a two-console test.
-
 ## Building
 
 Install devkitPro with the `switch-dev` group, then run:
