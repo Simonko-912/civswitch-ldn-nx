@@ -1,4 +1,4 @@
-# CivSwitch-LDN-NX v0.9.1
+# CivSwitch-LDN-NX v1.0
 
 <p align="center">
   <img src="logo.png" alt="CivSwitch-LDN-NX logo" width="220">
@@ -9,6 +9,19 @@
 > [Gezine](https://github.com/Gezine). This program delivers it from a
 > Switch 1 over local wireless (LDN), instead of from a Linux PC like
 > [CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN).
+
+> [!WARNING]
+> Remove **ldn_mitm** (and any other sysmodule that MITMs the LDN service)
+> before running this app. This program uses real local wireless: an active
+> ldn_mitm replaces the `ldn:u` service, scans the LAN instead of nearby
+> consoles, and can crash Atmosphere. On startup the app detects a MITM and
+> hard-blocks with removal instructions; it does not run until the module is
+> gone and the console has been rebooted.
+
+v1.0 adds an ldn_mitm environment guard. At startup the app checks whether the
+`ldn:u` service has a MITM. If it does, the app shows a blocking screen with
+steps to remove the module and reboot, and never initialises LDN or scans. The
+empty-scan screen also lists troubleshooting steps.
 
 v0.9.1 fixes the in-app version label: the running program now reports v0.9.1
 instead of v0.8. There are no functional changes.
@@ -38,9 +51,12 @@ it does not modify savedata.
 
 - A Switch 1 able to run `.nro` homebrew.
 - A Switch 2 with the physical Switch 1 edition of Civilization VII 1.0.0.
+- ldn_mitm (or any sysmodule that MITMs LDN) must be removed and the console
+  rebooted; the app hard-blocks while such a module is resident.
 - Both consoles must already have a connection profile for the same Wi-Fi/LAN.
-- Launching through an application title override is recommended for the LDN and
-  network service context.
+- Launch the app in **applet mode from the Album**. Do not use an R-button
+  title override: it can scan, but the game-level LDN handshake does not reach
+  the host and the lobby cannot be joined. The Album/applet path is required.
 
 The cartridge stays in Switch 2 throughout the process. `prod.keys`, Linux,
 Python and Node.js are not required when using the built NRO.
@@ -49,8 +65,9 @@ Python and Node.js are not required when using the built NRO.
 
 1. Back up any Civilization VII single-player saves you want to keep.
 2. On Switch 2, open **MULTIPLAYER > WIRELESS > CREATE GAME > HOST LOBBY**.
-3. On Switch 1, launch `civswitch-ldn-nx.nro`. Press **X** to rescan if needed,
-   choose the lobby with Up/Down, then press **A**.
+3. On Switch 1, open the Album and launch `civswitch-ldn-nx.nro` in applet mode.
+   Press **X** to rescan if needed, choose the lobby with Up/Down, then press
+   **A**.
 4. Wait for `Game lobby: JOINED` and confirm the extra player appears on
    Switch 2.
 5. Press **ZR once**. Do not close the game or either console while chat lines,

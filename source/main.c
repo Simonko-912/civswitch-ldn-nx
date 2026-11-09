@@ -4,6 +4,7 @@
 #include <string.h>
 #include "game_probe.h"
 #include "installer.h"
+#include "ldn_guard.h"
 
 // This build tests native LDN and the Civilization VII Remote JS Loader bootstrap.
 #define MAX_NETWORKS 24
@@ -21,6 +22,9 @@ static GameProbeResult game_result;
 static bool game_tested;
 static InstallerResult install_result;
 static bool install_tested;
+// Whether the user has explicitly run a scan (pressed X). The startup
+// auto-scan does not set this, so the empty-scan hint waits for a manual scan.
+static bool user_scanned;
 
 static void show_progress(unsigned sent, unsigned total) {
     consoleClear();
@@ -32,7 +36,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v0.9.1 - one-click save\n\n");
+    printf("CivSwitch LDN NX v1.0 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -43,6 +47,36 @@ static void show_install_progress(const char *message, unsigned step,
 static void report(const char *operation, Result result) {
     last_operation = operation;
     last_result = result;
+}
+
+// Hard block shown whenever ldn_mitm intercepts ldn:u. There is no "continue":
+// the app cannot use real local wireless while the module is resident, and
+// turning it off in its config is not sufficient, so the user must delete it
+// and reboot. Returns only when they choose exit.
+static void guard_block(PadState *pad) {
+    for (;;) {
+        consoleClear();
+        printf("CivSwitch LDN NX v1.0\n\n");
+        printf("BLOCKED: ldn_mitm plugin detected\n\n");
+        printf("ldn_mitm is intercepting the local\n");
+        printf("wireless service. This app needs real\n");
+        printf("local wireless and cannot run while\n");
+        printf("ldn_mitm is active.\n");
+        printf("Note: turning it off in its config is\n");
+        printf("not enough.\n\n");
+        printf("To use this app:\n");
+        printf("1. Delete the ldn_mitm folder:\n");
+        printf("   atmosphere/contents/4200000000000010\n");
+        printf("2. Reboot the console.\n");
+        printf("3. Start this app again.\n\n");
+        printf("Press + or B to exit.\n");
+        consoleUpdate(NULL);
+
+        padUpdate(pad);
+        u64 keys = padGetButtonsDown(pad);
+        if (keys & (HidNpadButton_Plus | HidNpadButton_B)) return;
+        svcSleepThread(20 * 1000 * 1000);
+    }
 }
 
 static void close_station(void) {
@@ -57,6 +91,25 @@ static void close_station(void) {
         ldnCloseStation();
         station_open = false;
     }
+}
+
+// The radio can return empty placeholder entries for ordinary WiFi signals
+// (zero application ID, no nodes). Those are not real rooms, so drop them.
+static bool is_real_room(const LdnNetworkInfo *network) {
+    return network->node_count >= 1 &&
+           network->network_id.intent_id.local_communication_id != 0;
+}
+
+static void compact_networks(void) {
+    int kept = 0;
+    for (int i = 0; i < network_count; i++) {
+        if (is_real_room(&networks[i])) {
+            if (kept != i) networks[kept] = networks[i];
+            kept++;
+        }
+    }
+    network_count = kept;
+    if (selected >= network_count) selected = 0;
 }
 
 static void scan_networks(void) {
@@ -74,6 +127,8 @@ static void scan_networks(void) {
     report("ldnScan", rc);
     if (R_FAILED(rc)) network_count = 0;
     if (network_count > MAX_NETWORKS) network_count = MAX_NETWORKS;
+    // Discard empty WiFi placeholders so the count reflects real rooms only.
+    compact_networks();
 }
 
 static void print_ip(LdnIpv4Address addr) {
@@ -137,7 +192,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v0.9.1\n");
+    printf("CivSwitch LDN NX v1.0\n");
     printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
@@ -155,6 +210,14 @@ static void draw(void) {
             printf("LDN version: %u  Host unavailable", network->version);
         }
         printf("\nPlayers: %d/%d\n", network->node_count, network->node_count_max);
+    } else if (user_scanned) {
+        printf("If another Switch is hosting nearby:\n");
+        printf("- make sure it is in the game's local\n");
+        printf("  wireless room (not asleep)\n");
+        printf("- keep the consoles close\n");
+        printf("- press X to scan again\n");
+    } else {
+        printf("Press X to scan for nearby rooms.\n");
     }
     if (connected) {
         LdnIpv4Address addr;
@@ -202,6 +265,16 @@ int main(int argc, char **argv) {
     PadState pad;
     padInitializeDefault(&pad);
 
+    // Pre-flight environment check. If a MITM intercepts ldn:u, hard-block:
+    // real LDN is unavailable while the module is resident, so we never
+    // initialise LDN or scan and return to the Homebrew Menu instead.
+    LdnGuardInfo guard = ldn_guard_check();
+    if (guard.mitm_present) {
+        guard_block(&pad);
+        consoleExit(NULL);
+        return 0;
+    }
+
     Result rc = ldnInitialize(LdnServiceType_User);
     report("ldnInitialize(ldn:u)", rc);
     ldn_initialized = R_SUCCEEDED(rc);
@@ -218,6 +291,7 @@ int main(int argc, char **argv) {
             redraw = true;
         }
         if (keys & HidNpadButton_X) {
+            user_scanned = true;
             install_tested = false;
             if (ldn_initialized) scan_networks();
             else {
@@ -251,6 +325,7 @@ int main(int argc, char **argv) {
                 ldn_initialized = false;
             }
             network_count = 0;
+            user_scanned = false;
             if (loader_sent) {
                 install_result = installer_run(show_install_progress);
                 install_tested = true;

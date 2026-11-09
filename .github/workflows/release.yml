@@ -52,14 +52,21 @@ jobs:
         run: |
           ls -la civswitch-ldn-nx.nro
           cat > notes.md <<'EOF'
-          ## In-app version label fix
+          ## ldn_mitm environment guard
 
-          Fixes the version label shown inside the running homebrew.
+          v1.0 detects and handles conflicts with ldn_mitm and any other
+          sysmodule that MITMs the LDN service.
 
-          - The in-app header now reports v0.9.1; v0.9 still displayed v0.8 on
-            screen even though the album/preview metadata was correct
-          - No functional changes; the one-button persistent-save installer and
-            the project logo from v0.9 are unchanged
+          - On startup the app checks whether ldn:u has a MITM. If it does, it
+            shows a blocking screen and never initialises LDN or scans; the
+            module must be removed and the console rebooted (turning it off in
+            its config is not enough).
+          - Scans now discard empty placeholder entries from ordinary WiFi
+            signals, so the network count reflects real rooms only.
+          - The empty-scan screen shows troubleshooting guidance after a manual
+            scan.
+          - Launch in applet mode from the Album; an R-button title override
+            can scan but cannot complete the game-level join.
 
           The NRO is built in CI from the tagged source with devkitPro.
           EOF
