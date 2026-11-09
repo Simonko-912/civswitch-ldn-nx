@@ -18,6 +18,15 @@
 > hard-blocks with removal instructions; it does not run until the module is
 > gone and the console has been rebooted.
 
+> [!IMPORTANT]
+> **Prefer launching from the Album (applet mode).** The app also opens via a
+> hold-R title override (application mode), but that path is supported only
+> when overriding **Civilization VII itself**. Overriding any other title can
+> scan LDN rooms but cannot complete the game-level join, and the launch-mode
+> guard then blocks with instructions to relaunch from the Album. Unless you
+> are specifically overriding Civilization VII, open the Album and launch
+> `civswitch-ldn-nx.nro` from there.
+
 v1.1.0 adds a launch-mode guard. When the app is started in application mode
 (hold-R title override), it reads the host title through pm:dmnt and continues
 only for Civilization VII; any other title, or one that cannot be identified,
