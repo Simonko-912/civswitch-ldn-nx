@@ -53,10 +53,14 @@ it does not modify savedata.
 - A Switch 2 with the physical Switch 1 edition of Civilization VII 1.0.0.
 - ldn_mitm (or any sysmodule that MITMs LDN) must be removed and the console
   rebooted; the app hard-blocks while such a module is resident.
-- Both consoles must already have a connection profile for the same Wi-Fi/LAN.
-- Launch the app in **applet mode from the Album**. Do not use an R-button
-  title override: it can scan, but the game-level LDN handshake does not reach
-  the host and the lobby cannot be joined. The Album/applet path is required.
+- Both consoles must already have saved connection profiles for the same
+  Wi-Fi/LAN network.
+- For the **ZR one-click persistent-save installation**, Switch 2 must have
+  **"Join this network automatically"** enabled for that Wi-Fi/LAN network.
+- Launch the app from the **Album** on Switch 1. Alternatively, a Civilization
+  VII title override can be used. Do not use another game's title override: it
+  can scan nearby LDN rooms, but it cannot complete the Civilization VII
+  game-level join.
 
 The cartridge stays in Switch 2 throughout the process. `prod.keys`, Linux,
 Python and Node.js are not required when using the built NRO.
@@ -64,21 +68,34 @@ Python and Node.js are not required when using the built NRO.
 ## One-click persistent install
 
 1. Back up any Civilization VII single-player saves you want to keep.
-2. On Switch 2, open **MULTIPLAYER > WIRELESS > CREATE GAME > HOST LOBBY**.
-3. On Switch 1, open the Album and launch `civswitch-ldn-nx.nro` in applet mode.
-   Press **X** to rescan if needed, choose the lobby with Up/Down, then press
-   **A**.
-4. Wait for `Game lobby: JOINED` and confirm the extra player appears on
+2. On Switch 2, confirm that the Wi-Fi/LAN network used by both consoles has
+   **"Join this network automatically"** enabled.
+3. On Switch 2, open **MULTIPLAYER > WIRELESS > CREATE GAME > HOST LOBBY**.
+4. On Switch 1, open the Album and launch `civswitch-ldn-nx.nro`. Alternatively,
+   use Civilization VII as the title override. Press **X** to rescan if needed,
+   choose the lobby with Up/Down, then press **A**.
+5. Wait for `Game lobby: JOINED` and confirm the extra player appears on
    Switch 2.
-5. Press **ZR once**. Do not close the game or either console while chat lines,
+6. Press **ZR once**. Do not close the game or either console while chat lines,
    Wi-Fi restoration, template upload and save writing are in progress.
-6. Wait for `Persistent trigger save installed` and `DONE` on Switch 1.
-7. Restart Civilization VII on Switch 2 and choose **Load Game**. Building the
-   list triggers the persistent Remote JS Loader on port 9026.
+7. Wait for `Persistent trigger save installed` and `DONE` on Switch 1.
+8. Restart Civilization VII on Switch 2 and choose **Load Game**. Building the
+   list triggers the persistent Remote JS Loader.
 
-If automatic discovery times out, verify that both consoles reconnect to the
-same LAN and that client isolation is disabled on the access point. Press X to
-return to LDN scanning and try again.
+## Troubleshooting
+
+For the **ZR** installation flow, Switch 2 leaves the temporary LDN connection
+after receiving the loader and must reconnect to the Wi-Fi/LAN network.
+Switch 1 then reconnects to the same network, finds Switch 2, and uploads the
+save file.
+
+If automatic discovery times out:
+
+- Confirm that both consoles have reconnected to the same Wi-Fi/LAN network.
+- On Switch 2, confirm that **"Join this network automatically"** is enabled
+  for that network.
+- Make sure client isolation is disabled on the access point.
+- Press **X** to return to LDN scanning and try again.
 
 ## Controls
 
