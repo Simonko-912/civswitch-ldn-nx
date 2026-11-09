@@ -55,8 +55,9 @@ it does not modify savedata.
   rebooted; the app hard-blocks while such a module is resident.
 - Both consoles must already have saved connection profiles for the same
   Wi-Fi/LAN network.
-- For the **ZR one-click persistent-save installation**, Switch 2 must have
-  **"Join this network automatically"** enabled for that Wi-Fi/LAN network.
+- For the **ZR one-click persistent-save installation**, both consoles must
+  have **"Join this network automatically"** enabled for that Wi-Fi/LAN
+  network.
 - Launch the app from the **Album** on Switch 1. Alternatively, a Civilization
   VII title override can be used. Do not use another game's title override: it
   can scan nearby LDN rooms, but it cannot complete the Civilization VII
@@ -68,9 +69,8 @@ Python and Node.js are not required when using the built NRO.
 ## One-click persistent install
 
 1. Back up any Civilization VII single-player saves you want to keep.
-2. On both consoles, confirm that the same Wi-Fi/LAN network is already saved.
-   On Switch 2, make sure **"Join this network automatically"** is enabled for
-   that network.
+2. On both consoles, confirm that the same Wi-Fi/LAN network is already saved
+   and has **"Join this network automatically"** enabled.
 3. On Switch 2, open **MULTIPLAYER > WIRELESS > CREATE GAME > HOST LOBBY**.
 4. On Switch 1, open the Album and launch `civswitch-ldn-nx.nro`. Alternatively,
    use Civilization VII as the title override. Press **X** to rescan if needed,
@@ -93,8 +93,8 @@ save file.
 If automatic discovery times out:
 
 - Confirm that both consoles have reconnected to the same Wi-Fi/LAN network.
-- On Switch 2, confirm that **"Join this network automatically"** is enabled
-  for that network.
+- On both consoles, confirm that **"Join this network automatically"** is
+  enabled for that network.
 - Make sure client isolation is disabled on the access point.
 - Press **X** to return to LDN scanning and try again.
 
