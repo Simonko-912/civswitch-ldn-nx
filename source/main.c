@@ -36,7 +36,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.1.0 - one-click save\n\n");
+    printf("CivSwitch LDN NX v1.2.0 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -56,7 +56,7 @@ static void report(const char *operation, Result result) {
 static void guard_block(PadState *pad) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.1.0\n\n");
+        printf("CivSwitch LDN NX v1.2.0\n\n");
         printf("BLOCKED: ldn_mitm plugin detected\n\n");
         printf("ldn_mitm is intercepting the local\n");
         printf("wireless service. This app needs real\n");
@@ -86,7 +86,7 @@ static void guard_block(PadState *pad) {
 static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.1.0\n\n");
+        printf("CivSwitch LDN NX v1.2.0\n\n");
         printf("PLEASE USE APPLET MODE\n\n");
         printf("This app is running in application\n");
         printf("mode (hold-R title override). In\n");
@@ -223,7 +223,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.1.0\n");
+    printf("CivSwitch LDN NX v1.2.0\n");
     printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);

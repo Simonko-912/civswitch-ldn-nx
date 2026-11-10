@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the embedded v0.8 persistent-installer JavaScript header.
+"""Generate the embedded persistent-installer JavaScript header.
 
 The installer logic and save template originate from Gezine/CivSwitch.  This
 script wraps and compresses the bundled Remote JS Loader exactly like upstream
@@ -33,7 +33,7 @@ def main():
                "\n} catch (e) {\nawait log('EXCEPTION: ' + e.message);\n"
                "await log(e.stack);\n}\n})();")
 
-    with tempfile.TemporaryDirectory(prefix="civswitch-v08-") as temp:
+    with tempfile.TemporaryDirectory(prefix="civswitch-installer-") as temp:
         wrapped_path = os.path.join(temp, "wrapped.js")
         hex_path = os.path.join(temp, "stage.hex")
         io.open(wrapped_path, "w", encoding="utf-8", newline="\n").write(wrapped)

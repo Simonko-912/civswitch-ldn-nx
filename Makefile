@@ -44,7 +44,7 @@ DATA		:=	data
 INCLUDES	:=	
 APP_TITLE	:=	CivSwitch LDN NX
 APP_AUTHOR	:=	xiaolizi23
-APP_VERSION	:=	1.1.0
+APP_VERSION	:=	1.2.0
 ICON		:=	icon.jpg
 #ROMFS	:=	romfs
 

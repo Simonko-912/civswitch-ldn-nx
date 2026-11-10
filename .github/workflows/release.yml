@@ -52,19 +52,20 @@ jobs:
         run: |
           ls -la civswitch-ldn-nx.nro
           cat > notes.md <<'EOF'
-          ## Launch-mode guard
+          ## Faster trigger-save startup
 
-          v1.1.0 detects how the app was launched and blocks unsupported
-          application-mode starts.
+          v1.2.0 shortens the launch of the persistent trigger save. The encoded
+          loader stage is now kept in a hidden HTML span: the bootstrap still
+          reads it from the document text, while the game no longer lays out the
+          full hexadecimal payload.
 
-          - From the Album (applet mode), and as a Civilization VII title
-            override, the app works exactly as before.
-          - In application mode (hold-R title override), the app reads the host
-            title through pm:dmnt and continues only for Civilization VII.
-          - Any other overridden title, or a title that cannot be identified,
-            shows a blocking screen asking the user to launch from the Album
-            instead; LDN is never initialised in that case.
-          - The ldn_mitm hard-block from earlier releases remains in place.
+          - Applies to trigger saves written from now on. After upgrading, run
+            the ZR one-click installation once to replace the older trigger save
+            (it clears every single-player save, so back up first).
+          - Normal save loading, the LDN connection flow and the launch-mode
+            guard are unchanged.
+          - The ldn_mitm hard-block and the applet-mode preference from earlier
+            releases remain in place.
 
           The NRO is built in CI from the tagged source with devkitPro.
           EOF

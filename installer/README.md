@@ -1,6 +1,6 @@
 # Embedded persistent-installer assets
 
-These files make the v0.8 NRO's one-click save installation reproducible.
+These files reproduce the one-click save installation used by the current NRO.
 
 - `core.js`, `install.py` and `compress_stage.js` are adapted/copied from
   [ItsNerisma/CivSwitchLDN](https://github.com/ItsNerisma/CivSwitchLDN) commit
@@ -11,6 +11,11 @@ These files make the v0.8 NRO's one-click save installation reproducible.
   `32fa8a0d6dd0a480d8e541e63ea44c4619bc6f7be4282cfc3cb6a4f6d305dfae`.
 - `generate_assets.py` wraps and compresses `core.js`, inserts the result into
   the upstream installer block and writes `../source/installer_payload.h`.
+- v1.2.0 wraps the encoded `XSSP` stage in a hidden HTML span. The loader still
+  reads the stage from `document.body.textContent`, while the game renderer no
+  longer has to lay out the full hexadecimal payload. This local adaptation is
+  based on [Gezine/CivSwitch PR #3](https://github.com/Gezine/CivSwitch/pull/3)
+  by ItsNerisma.
 
 Regenerate with:
 

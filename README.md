@@ -1,4 +1,4 @@
-# CivSwitch-LDN-NX v1.1.0
+# CivSwitch-LDN-NX v1.2.0
 
 <p align="center">
   <img src="logo.png" alt="CivSwitch-LDN-NX logo" width="220">
@@ -26,6 +26,13 @@
 > guard then blocks with instructions to relaunch from the Album. Unless you
 > are specifically overriding Civilization VII, open the Album and launch
 > `civswitch-ldn-nx.nro` from there.
+
+v1.2.0 speeds up launching the persistent trigger save. The encoded loader
+stage is now kept in a hidden HTML span: the bootstrap can still read it from
+the document text, while the game's renderer no longer lays out the large
+hexadecimal payload. Only trigger saves written from now on use the new
+layout; a trigger installed by an earlier release keeps working as before.
+Normal save loading and the LDN connection flow are unchanged.
 
 v1.1.0 adds a launch-mode guard. When the app is started in application mode
 (hold-R title override), it reads the host title through pm:dmnt and continues
@@ -97,6 +104,10 @@ Python and Node.js are not required when using the built NRO.
 7. Wait for `Persistent trigger save installed` and `DONE` on Switch 1.
 8. Restart Civilization VII on Switch 2 and choose **Load Game**. Building the
    list triggers the persistent Remote JS Loader.
+
+If you are upgrading from an earlier release, repeat this ZR installation once
+so the newer trigger save replaces the old one. Remember that the ZR operation
+clears every single-player save, so back up first.
 
 ## Troubleshooting
 
