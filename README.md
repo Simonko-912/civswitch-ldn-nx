@@ -32,7 +32,10 @@ stage is now kept in a hidden HTML span: the bootstrap can still read it from
 the document text, while the game's renderer no longer lays out the large
 hexadecimal payload. Only trigger saves written from now on use the new
 layout; a trigger installed by an earlier release keeps working as before.
-Normal save loading and the LDN connection flow are unchanged.
+Normal save loading and the LDN connection flow are unchanged. The hidden-span
+technique comes from
+[Gezine/CivSwitch PR #3](https://github.com/Gezine/CivSwitch/pull/3) by
+ItsNerisma.
 
 v1.1.0 adds a launch-mode guard. When the app is started in application mode
 (hold-R title override), it reads the host title through pm:dmnt and continues
