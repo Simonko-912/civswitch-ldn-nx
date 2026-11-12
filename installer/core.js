@@ -1284,8 +1284,13 @@
                 if (sock_fd === null && current_ip === null) {
                     // LDN-only mode: no Wi-Fi IP is available. Wait for a
                     // usable network before retrying, exactly like before.
+                    // Log the bind error once too, so a hardware stall is
+                    // diagnosable (socket/setsockopt/bind/listen step).
                     if (!announced) {
                         await log("network down - waiting for network..");
+                        if (bind_error) {
+                            await log("listener setup failed: " + bind_error.message);
+                        }
                         announced = true;
                     }
                     await sleep(2000);
