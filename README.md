@@ -1,4 +1,4 @@
-# CivSwitch-LDN-NX v1.3.0
+# CivSwitch-LDN-NX v1.3.1
 
 <p align="center">
   <img src="logo.png" alt="CivSwitch-LDN-NX logo" width="220">
@@ -27,7 +27,7 @@
 > are specifically overriding Civilization VII, open the Album and launch
 > `civswitch-ldn-nx.nro` from there.
 
-v1.3.0 makes the ZR one-click save work **over local wireless only**:
+v1.3.1 makes the ZR one-click save work **over local wireless only**:
 no Wi-Fi/LAN network is needed for the save transfer. The Remote JS
 Loader on the Switch 2 now starts listening on `0.0.0.0:9026` even with
 Wi-Fi off, and the Switch 1 connects directly to the Switch 2's LDN IP
@@ -87,7 +87,7 @@ it does not modify savedata.
 - ldn_mitm (or any sysmodule that MITMs LDN) must be removed and the console
   rebooted; the app hard-blocks while such a module is resident.
 - The consoles must be able to join the Civilization VII local-wireless
-  lobby. Since v1.3.0 no Wi-Fi/LAN network is required for the ZR
+  lobby. Since v1.3.1 no Wi-Fi/LAN network is required for the ZR
   installation.
 - Launch the app from the **Album** on Switch 1. Alternatively, a Civilization
   VII title override can be used. Do not use another game's title override: it

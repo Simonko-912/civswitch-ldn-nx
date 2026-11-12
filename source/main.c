@@ -22,9 +22,13 @@ static GameProbeResult game_result;
 static bool game_tested;
 static InstallerResult install_result;
 static bool install_tested;
-// True while the ZR upload runs: the Switch 2 loader is only reachable
-// through the live LDN connection in LDN-only mode, so do not let
-// close_station() disconnect it mid-upload.
+// True only during the ZR upload: the Switch 2 loader is then only
+// reachable through the live LDN connection, so close_station() must not
+// disconnect it mid-upload. Also guards ldnCloseStation(): the libnx state
+// machine only holds StationConnected while the station is open, so the
+// upload (which rides the live LDN interface) needs both the connection and
+// the station to stay up. Scoped to the ZR handler so every other path
+// (B leave, R loader, Y fail, poll fail) disconnects exactly as before.
 static bool ldn_keepalive;
 // Whether the user has explicitly run a scan (pressed X). The startup
 // auto-scan does not set this, so the empty-scan hint waits for a manual scan.
@@ -40,7 +44,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.3.0 - one-click save\n\n");
+    printf("CivSwitch LDN NX v1.3.1 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -60,7 +64,7 @@ static void report(const char *operation, Result result) {
 static void guard_block(PadState *pad) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.3.0\n\n");
+        printf("CivSwitch LDN NX v1.3.1\n\n");
         printf("BLOCKED: ldn_mitm plugin detected\n\n");
         printf("ldn_mitm is intercepting the local\n");
         printf("wireless service. This app needs real\n");
@@ -90,7 +94,7 @@ static void guard_block(PadState *pad) {
 static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.3.0\n\n");
+        printf("CivSwitch LDN NX v1.3.1\n\n");
         printf("PLEASE USE APPLET MODE\n\n");
         printf("This app is running in application\n");
         printf("mode (hold-R title override). In\n");
@@ -122,7 +126,7 @@ static void close_station(void) {
         connected = false;
     }
     game_tested = false;
-    if (station_open) {
+    if (station_open && !ldn_keepalive) {
         ldnCloseStation();
         station_open = false;
     }
@@ -218,7 +222,6 @@ static void connect_selected(void) {
     Result rc = ldnConnect(&security, &user, version, 0, network);
     report("ldnConnect", rc);
     connected = R_SUCCEEDED(rc);
-    ldn_keepalive = connected;
     if (connected) {
         game_result = game_join(network->nodes[0].ip_addr);
         game_tested = true;
@@ -228,7 +231,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.3.0\n");
+    printf("CivSwitch LDN NX v1.3.1\n");
     printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
@@ -362,20 +365,34 @@ int main(int argc, char **argv) {
         if ((keys & HidNpadButton_ZR) && game_joined) {
             game_result = game_send(true, show_progress);
             bool loader_sent = game_result.completed;
-            ldn_keepalive = true;
+            // Only keep the LDN connection alive when the loader was
+            // actually sent: it is then reachable exclusively through it.
+            ldn_keepalive = loader_sent;
             close_station();
             game_tested = true;
             install_tested = false;
             if (loader_sent) {
-                // The loader is only reachable through the live LDN
-                // connection in LDN-only mode, so stay connected during
-                // the upload and only tear LDN down afterwards.
+                // LdnIpv4Address is host byte order (see game_probe.c,
+                // which htonl()s it for sockets); the installer wants
+                // network order for s_addr.
                 install_result = installer_run(
-                    networks[selected].nodes[0].ip_addr.addr,
+                    htonl(networks[selected].nodes[0].ip_addr.addr),
                     show_install_progress);
                 install_tested = true;
             }
             ldn_keepalive = false;
+            // Tear the LDN station + connection back down, then exit the
+            // service. (The original called ldnExit() *before*
+            // installer_run because it uploaded over Wi-Fi; LDN-only must
+            // keep LDN up through the upload.)
+            if (connected) {
+                ldnDisconnect();
+                connected = false;
+            }
+            if (station_open) {
+                ldnCloseStation();
+                station_open = false;
+            }
             if (ldn_initialized) {
                 ldnExit();
                 ldn_initialized = false;
