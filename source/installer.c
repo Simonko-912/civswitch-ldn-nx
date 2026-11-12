@@ -15,11 +15,8 @@
 #include <unistd.h>
 
 #define LOADER_PORT 9026
-#define MAX_SUBNET_HOSTS 512
-#define SCAN_BATCH 32
-#define SCAN_CONNECT_MS 250
+#define CONNECT_PAUSE_NS 500000000ULL
 #define LOADER_WAIT_NS 45000000000ULL
-#define WIFI_WAIT_NS 30000000000ULL
 #define UPLOAD_TIMEOUT_NS 30000000000ULL
 #define APPLY_TIMEOUT_NS 300000000000ULL
 #define RAW_CHUNK 300000U
@@ -44,7 +41,7 @@ static int set_nonblocking(int fd, bool enabled) {
     if (flags < 0) return -1;
     if (enabled) flags |= O_NONBLOCK;
     else flags &= ~O_NONBLOCK;
-    return fcntl(fd, F_SETFL, flags);
+    return fcntl(fd, F_SETFL, 0);
 }
 
 static int send_all(int fd, const char *data, size_t size) {
@@ -184,89 +181,26 @@ static bool probe_loader_socket(int fd) {
                               "Executed successfully", 3000000000ULL) == 0;
 }
 
-static bool connected_socket(int fd) {
-    int error = 0;
-    socklen_t error_size = sizeof(error);
-    return getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_size) == 0 &&
-           error == 0;
-}
-
-static u32 scan_for_loader(u32 local_ip, u32 subnet_mask,
-                           InstallerProgress callback) {
-    u32 local_host = ntohl(local_ip);
-    u32 mask_host = ntohl(subnet_mask);
-    u64 count = (u64)(~mask_host) + 1;
-    if (count < 4 || count > MAX_SUBNET_HOSTS) {
-        errno = ENOTSUP;
-        return 0;
-    }
-    u32 network = local_host & mask_host;
-    u32 candidates[MAX_SUBNET_HOSTS];
-    unsigned candidate_count = 0;
-    for (u32 offset = 1; offset < count - 1; ++offset) {
-        u32 candidate = network + offset;
-        if (candidate != local_host)
-            candidates[candidate_count++] = htonl(candidate);
-    }
-
+// LDN-only discovery: the loader IP is already known from the lobby, so
+// connect directly and retry for LOADER_WAIT_NS while the Switch 2 boots
+// up its loader after the reboot/Load Game step. No Wi-Fi is touched.
+static u32 wait_for_loader(u32 host_ip, InstallerProgress callback) {
     u64 deadline = armGetSystemTick() + armNsToTicks(LOADER_WAIT_NS);
     unsigned pass = 0;
     while (armGetSystemTick() < deadline && appletMainLoop()) {
         pass++;
-        progress(callback, "Scanning Wi-Fi for Switch 2", pass, 0);
-        for (unsigned base = 0; base < candidate_count; base += SCAN_BATCH) {
-            int sockets[SCAN_BATCH];
-            unsigned batch = candidate_count - base;
-            if (batch > SCAN_BATCH) batch = SCAN_BATCH;
-            fd_set writes;
-            FD_ZERO(&writes);
-            int max_fd = -1;
-
-            for (unsigned i = 0; i < batch; ++i) {
-                sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
-                if (sockets[i] < 0 || set_nonblocking(sockets[i], true) < 0) {
-                    if (sockets[i] >= 0) close(sockets[i]);
-                    sockets[i] = -1;
-                    continue;
-                }
-                struct sockaddr_in target = {0};
-                target.sin_family = AF_INET;
-                target.sin_port = htons(LOADER_PORT);
-                target.sin_addr.s_addr = candidates[base + i];
-                int rc = connect(sockets[i], (const struct sockaddr *)&target,
-                                 sizeof(target));
-                if (rc < 0 && errno != EINPROGRESS) {
-                    close(sockets[i]);
-                    sockets[i] = -1;
-                    continue;
-                }
-                FD_SET(sockets[i], &writes);
-                if (sockets[i] > max_fd) max_fd = sockets[i];
-            }
-
-            if (max_fd >= 0) {
-                struct timeval timeout = {
-                    .tv_sec = 0,
-                    .tv_usec = SCAN_CONNECT_MS * 1000,
-                };
-                select(max_fd + 1, NULL, &writes, NULL, &timeout);
-            }
-            for (unsigned i = 0; i < batch; ++i) {
-                if (sockets[i] < 0) continue;
-                bool ready = FD_ISSET(sockets[i], &writes) &&
-                             connected_socket(sockets[i]);
-                if (ready && probe_loader_socket(sockets[i])) {
-                    u32 result = candidates[base + i];
-                    close(sockets[i]);
-                    for (unsigned j = i + 1; j < batch; ++j)
-                        if (sockets[j] >= 0) close(sockets[j]);
-                    return result;
-                }
-                close(sockets[i]);
-            }
-            if (armGetSystemTick() >= deadline || !appletMainLoop()) break;
+        progress(callback, "Waiting for loader over local wireless", pass, 0);
+        int fd = connect_ip(host_ip, 3000);
+        if (fd < 0) {
+            svcSleepThread(CONNECT_PAUSE_NS);
+            continue;
         }
-        svcSleepThread(250000000LL);
+        if (probe_loader_socket(fd)) {
+            close(fd);
+            return host_ip;
+        }
+        close(fd);
+        svcSleepThread(CONNECT_PAUSE_NS);
     }
     errno = ETIMEDOUT;
     return 0;
@@ -355,61 +289,34 @@ static InstallerResult upload_installer(u32 ip, InstallerProgress callback) {
     if (run_code(ip, installer_apply_js, sizeof(installer_apply_js) - 1,
                  "INSTALL DONE", APPLY_TIMEOUT_NS) != 0)
         return installer_result("Switch 2 rejected the save installer", errno,
-                                ip, total, total, false);
+                                ip, total, total, true);
     return installer_result("Persistent trigger save installed", 0,
                             ip, total, total, true);
 }
 
-InstallerResult installer_run(InstallerProgress callback) {
-    progress(callback, "Restoring Wi-Fi", 0, 0);
-    Result rc = nifmInitialize(NifmServiceType_User);
+InstallerResult installer_run(u32 host_ip, InstallerProgress callback) {
+    if (host_ip == 0)
+        return installer_result("No local wireless IP for Switch 2", 0,
+                                0, 0, 0, false);
+
+    progress(callback, "Connecting over local wireless", 0, 0);
+    Result rc = socketInitializeDefault();
     if (R_FAILED(rc))
-        return installer_result("nifmInitialize failed", rc, 0, 0, 0, false);
+        return installer_result("socketInitialize failed", rc, 0, 0, 0, false);
 
-    NifmRequest request = {0};
-    bool request_open = false;
-    bool sockets_open = false;
-    InstallerResult result = installer_result("Wi-Fi did not reconnect",
+    bool sockets_open = true;
+    InstallerResult result = installer_result("Remote loader not found over local wireless",
                                               ETIMEDOUT, 0, 0, 0, false);
-    rc = nifmCreateRequest(&request, true);
-    if (R_FAILED(rc)) {
-        result = installer_result("nifmCreateRequest failed", rc, 0, 0, 0, false);
+    u32 loader_ip = wait_for_loader(host_ip, callback);
+    if (!loader_ip) {
+        result = installer_result("Remote loader not found over local wireless",
+                                  errno, host_ip, 0, 0, false);
         goto finish;
     }
-    request_open = true;
-    rc = nifmRequestSubmit(&request);
-    if (R_FAILED(rc)) {
-        result = installer_result("nifmRequestSubmit failed", rc, 0, 0, 0, false);
-        goto finish;
-    }
-
-    u32 local_ip = 0, mask = 0, gateway = 0, dns1 = 0, dns2 = 0;
-    u64 wifi_deadline = armGetSystemTick() + armNsToTicks(WIFI_WAIT_NS);
-    while (armGetSystemTick() < wifi_deadline && appletMainLoop()) {
-        rc = nifmGetCurrentIpConfigInfo(&local_ip, &mask, &gateway, &dns1, &dns2);
-        if (R_SUCCEEDED(rc) && local_ip != 0 && mask != 0) break;
-        svcSleepThread(250000000LL);
-    }
-    if (local_ip == 0 || mask == 0) goto finish;
-
-    rc = socketInitializeDefault();
-    if (R_FAILED(rc)) {
-        result = installer_result("socketInitialize failed", rc, 0, 0, 0, false);
-        goto finish;
-    }
-    sockets_open = true;
-    u32 switch_ip = scan_for_loader(local_ip, mask, callback);
-    if (!switch_ip) {
-        result = installer_result("Remote loader not found on Wi-Fi", errno,
-                                  0, 0, 0, false);
-        goto finish;
-    }
-    progress(callback, "Remote loader found", 0, 0);
-    result = upload_installer(switch_ip, callback);
+    progress(callback, "Remote loader found over local wireless", 0, 0);
+    result = upload_installer(loader_ip, callback);
 
 finish:
     if (sockets_open) socketExit();
-    if (request_open) nifmRequestClose(&request);
-    nifmExit();
     return result;
 }

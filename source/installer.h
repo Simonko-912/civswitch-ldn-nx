@@ -15,6 +15,8 @@ typedef struct {
 typedef void (*InstallerProgress)(const char *message, unsigned step,
                                   unsigned total);
 
-InstallerResult installer_run(InstallerProgress on_progress);
+// LDN-only: the Switch 2 loader is reachable on its local-wireless IP,
+// which the caller learned from the lobby node list.
+InstallerResult installer_run(u32 host_ip, InstallerProgress on_progress);
 
 #endif

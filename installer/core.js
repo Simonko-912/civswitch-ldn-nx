@@ -1269,34 +1269,45 @@
             try { Network.resetNetworkCommunication(); } catch (e) {}
 
             let setupFails = 0;
+            let announced = false;
 
             while (true) {
                 let current_ip = get_current_ip();
-                let announced = false;
-                while (current_ip === null) {
+                let sock_fd = null;
+                let bind_error = null;
+                try {
+                    sock_fd = create_socket();
+                } catch (err) {
+                    bind_error = err;
+                }
+
+                if (sock_fd === null && current_ip === null) {
+                    // LDN-only mode: no Wi-Fi IP is available. Wait for a
+                    // usable network before retrying, exactly like before.
                     if (!announced) {
                         await log("network down - waiting for network..");
                         announced = true;
                     }
                     await sleep(2000);
-                    current_ip = get_current_ip();
+                    continue;
                 }
 
-                let sock_fd;
-                try {
-                    sock_fd = create_socket();
-                    setupFails = 0;
-                } catch (err) {
+                if (sock_fd === null) {
                     setupFails++;
                     if (setupFails % 3 === 0) {
                         try { Network.resetNetworkCommunication(); } catch (e) {}
                     }
-                    await log("listener setup failed: " + err.message);
+                    await log("listener setup failed: " + bind_error.message);
                     await sleep(2000);
                     continue;
                 }
 
-                const network_str = current_ip + ":" + PORT;
+                setupFails = 0;
+                if (current_ip === null) {
+                    await log("no network IP - listening on all interfaces (LDN reachable)");
+                }
+
+                const network_str = (current_ip === null ? "0.0.0.0" : current_ip) + ":" + PORT;
 
                 let acceptFails = 0;
                 let badConns = 0;

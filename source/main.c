@@ -22,6 +22,10 @@ static GameProbeResult game_result;
 static bool game_tested;
 static InstallerResult install_result;
 static bool install_tested;
+// True while the ZR upload runs: the Switch 2 loader is only reachable
+// through the live LDN connection in LDN-only mode, so do not let
+// close_station() disconnect it mid-upload.
+static bool ldn_keepalive;
 // Whether the user has explicitly run a scan (pressed X). The startup
 // auto-scan does not set this, so the empty-scan hint waits for a manual scan.
 static bool user_scanned;
@@ -113,7 +117,7 @@ static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
 static void close_station(void) {
     game_close();
     game_joined = false;
-    if (connected) {
+    if (connected && !ldn_keepalive) {
         ldnDisconnect();
         connected = false;
     }
@@ -214,6 +218,7 @@ static void connect_selected(void) {
     Result rc = ldnConnect(&security, &user, version, 0, network);
     report("ldnConnect", rc);
     connected = R_SUCCEEDED(rc);
+    ldn_keepalive = connected;
     if (connected) {
         game_result = game_join(network->nodes[0].ip_addr);
         game_tested = true;
@@ -283,6 +288,7 @@ static void draw(void) {
     }
     printf("\nUp/Down select  X scan  A join lobby\n");
     printf("Y test  R loader only  ZR replace saves\n");
+    printf("LDN-only: no Wi-Fi needed after the lobby join.\n");
     printf("WARNING: ZR deletes all single-player saves.\n");
     printf("B leave  + exit\n");
     consoleUpdate(NULL);
@@ -356,19 +362,26 @@ int main(int argc, char **argv) {
         if ((keys & HidNpadButton_ZR) && game_joined) {
             game_result = game_send(true, show_progress);
             bool loader_sent = game_result.completed;
+            ldn_keepalive = true;
             close_station();
             game_tested = true;
             install_tested = false;
+            if (loader_sent) {
+                // The loader is only reachable through the live LDN
+                // connection in LDN-only mode, so stay connected during
+                // the upload and only tear LDN down afterwards.
+                install_result = installer_run(
+                    networks[selected].nodes[0].ip_addr.addr,
+                    show_install_progress);
+                install_tested = true;
+            }
+            ldn_keepalive = false;
             if (ldn_initialized) {
                 ldnExit();
                 ldn_initialized = false;
             }
             network_count = 0;
             user_scanned = false;
-            if (loader_sent) {
-                install_result = installer_run(show_install_progress);
-                install_tested = true;
-            }
             redraw = true;
         }
         if (!game_joined && network_count > 0) {
