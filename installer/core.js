@@ -1325,10 +1325,24 @@
 
                         if (client_fd === -1n) {
                             acceptFails++;
-                            if (acceptFails >= 2) break;
+                            if (acceptFails >= 6) break;
                             continue;
                         }
                         acceptFails = 0;
+
+                        // Diagnostic: log the source IP of every connection.
+                        // If Switch 1 is dialing its OWN IP (swapped lobby
+                        // roles) this shows S1's address; if S1 is dialing
+                        // the host IP it shows S2's own address.
+                        {
+                            // sin_addr is at offsets 4..7 (network byte order),
+                            // same layout get_current_ip() reads.
+                            const sa = Number(read8(sockaddr_in + 4n));
+                            const sb = Number(read8(sockaddr_in + 5n));
+                            const sc = Number(read8(sockaddr_in + 6n));
+                            const sd = Number(read8(sockaddr_in + 7n));
+                            await log("connection from " + sa + "." + sb + "." + sc + "." + sd);
+                        }
 
                         let total_read = 0;
                         let read_error = false;
@@ -1357,7 +1371,10 @@
                             await log(read_error ? "connection dropped" : "No valid data received");
                             close(client_fd);
                             badConns++;
-                            if (badConns >= 3) break;
+                            // Tolerate Switch 1's repeated 1-byte probe
+                            // connects (each reads 0 bytes -> "No valid
+                            // data received") without dropping the listener.
+                            if (badConns >= 8) break;
                             continue;
                         }
                         badConns = 0;
