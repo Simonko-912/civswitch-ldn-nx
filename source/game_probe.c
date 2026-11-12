@@ -409,6 +409,13 @@ static void reset_transport_state(void) {
     chat_start_tick = 0;
 }
 
+bool game_host_ip(LdnIpv4Address *out) {
+    if (out == NULL) return false;
+    if (active_fd < 0) return false;
+    *out = active_host;
+    return true;
+}
+
 void game_close(void) {
     if (active_fd >= 0) close(active_fd);
     active_fd = -1;

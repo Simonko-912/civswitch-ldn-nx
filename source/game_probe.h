@@ -17,4 +17,8 @@ GameProbeResult game_send(bool send_loader,
 bool game_poll(GameProbeResult *result);
 void game_close(void);
 
+// Returns the joined lobby host's LDN IP (host-ordered address, as stored in
+// LdnNetworkInfo.nodes[0].ip_addr). Only valid while joined.
+bool game_host_ip(LdnIpv4Address *out);
+
 #endif

@@ -36,7 +36,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.2.0 - one-click save\n\n");
+    printf("CivSwitch LDN NX v1.3.0 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -56,7 +56,7 @@ static void report(const char *operation, Result result) {
 static void guard_block(PadState *pad) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.2.0\n\n");
+        printf("CivSwitch LDN NX v1.3.0\n\n");
         printf("BLOCKED: ldn_mitm plugin detected\n\n");
         printf("ldn_mitm is intercepting the local\n");
         printf("wireless service. This app needs real\n");
@@ -86,7 +86,7 @@ static void guard_block(PadState *pad) {
 static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.2.0\n\n");
+        printf("CivSwitch LDN NX v1.3.0\n\n");
         printf("PLEASE USE APPLET MODE\n\n");
         printf("This app is running in application\n");
         printf("mode (hold-R title override). In\n");
@@ -223,7 +223,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.2.0\n");
+    printf("CivSwitch LDN NX v1.3.0\n");
     printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
@@ -356,19 +356,30 @@ int main(int argc, char **argv) {
         if ((keys & HidNpadButton_ZR) && game_joined) {
             game_result = game_send(true, show_progress);
             bool loader_sent = game_result.completed;
-            close_station();
             game_tested = true;
             install_tested = false;
+            if (loader_sent) {
+                // LDN-only install: keep the room and the lobby socket up for
+                // the whole transfer. Switch 2's loader listens on the host's
+                // own LDN IP, which the handshake already gave us - no Wi-Fi.
+                LdnIpv4Address host;
+                if (game_host_ip(&host)) {
+                    install_result =
+                        installer_run(show_install_progress, host);
+                    install_tested = true;
+                } else {
+                    install_result = (InstallerResult){
+                        "No lobby connection", 0, 0, 0, 0, false};
+                    install_tested = true;
+                }
+            }
+            close_station();
             if (ldn_initialized) {
                 ldnExit();
                 ldn_initialized = false;
             }
             network_count = 0;
             user_scanned = false;
-            if (loader_sent) {
-                install_result = installer_run(show_install_progress);
-                install_tested = true;
-            }
             redraw = true;
         }
         if (!game_joined && network_count > 0) {

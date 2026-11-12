@@ -1,3 +1,16 @@
+// LDN-only persistent-save installer.
+//
+// The stock installer restored the console's Wi-Fi connection and scanned the
+// whole subnet for the Remote JS Loader. On a console that only has a local
+// wireless (LDN) link there is no Wi-Fi to restore and no subnet to scan, so
+// that path dead-ends. This version keeps the LDN connection alive and talks
+// to the loader on the host's own LDN IP, which the lobby handshake already
+// provides (LdnNetworkInfo.nodes[0].ip_addr).
+//
+// Everything else - the chunked template upload protocol, the persistent
+// trigger save layout, the probe handshake - is unchanged from the Gezine
+// CivSwitch installer (MIT, see LICENSES/Gezine-MIT.txt).
+
 #include "installer.h"
 #include "installer_payload.h"
 #include "save_template_bin.h"
@@ -15,11 +28,8 @@
 #include <unistd.h>
 
 #define LOADER_PORT 9026
-#define MAX_SUBNET_HOSTS 512
-#define SCAN_BATCH 32
-#define SCAN_CONNECT_MS 250
+#define LOADER_CONNECT_MS 3000
 #define LOADER_WAIT_NS 45000000000ULL
-#define WIFI_WAIT_NS 30000000000ULL
 #define UPLOAD_TIMEOUT_NS 30000000000ULL
 #define APPLY_TIMEOUT_NS 300000000000ULL
 #define RAW_CHUNK 300000U
@@ -58,7 +68,10 @@ static int send_all(int fd, const char *data, size_t size) {
     return 0;
 }
 
-static int connect_ip(u32 ip, unsigned timeout_ms) {
+// Connect to the loader on the host's LDN IP. The socket stack is owned by
+// game_probe (socketInitializeDefault), which stays alive for the duration of
+// the install - the LDN room must not be torn down mid-transfer.
+static int connect_loader(u32 host_addr, unsigned timeout_ms) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     if (set_nonblocking(fd, true) < 0) {
@@ -69,7 +82,7 @@ static int connect_ip(u32 ip, unsigned timeout_ms) {
     struct sockaddr_in target = {0};
     target.sin_family = AF_INET;
     target.sin_port = htons(LOADER_PORT);
-    target.sin_addr.s_addr = ip;
+    target.sin_addr.s_addr = htonl(host_addr);
     int rc = connect(fd, (const struct sockaddr *)&target, sizeof(target));
     if (rc < 0 && errno != EINPROGRESS) {
         close(fd);
@@ -168,103 +181,36 @@ static int run_code_on_socket(int fd, const char *code, size_t code_size,
     return result;
 }
 
-static int run_code(u32 ip, const char *code, size_t code_size,
+static int run_code(u32 host_addr, const char *code, size_t code_size,
                     const char *success, u64 timeout_ns) {
-    int fd = connect_ip(ip, 3000);
+    int fd = connect_loader(host_addr, LOADER_CONNECT_MS);
     if (fd < 0) return -1;
     int result = run_code_on_socket(fd, code, code_size, success, timeout_ns);
     close(fd);
     return result;
 }
 
-static bool probe_loader_socket(int fd) {
+static bool probe_loader(int fd) {
     static const char probe[] = "1";
     if (set_nonblocking(fd, false) < 0) return false;
     return run_code_on_socket(fd, probe, sizeof(probe) - 1,
                               "Executed successfully", 3000000000ULL) == 0;
 }
 
-static bool connected_socket(int fd) {
-    int error = 0;
-    socklen_t error_size = sizeof(error);
-    return getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &error_size) == 0 &&
-           error == 0;
-}
-
-static u32 scan_for_loader(u32 local_ip, u32 subnet_mask,
-                           InstallerProgress callback) {
-    u32 local_host = ntohl(local_ip);
-    u32 mask_host = ntohl(subnet_mask);
-    u64 count = (u64)(~mask_host) + 1;
-    if (count < 4 || count > MAX_SUBNET_HOSTS) {
-        errno = ENOTSUP;
-        return 0;
-    }
-    u32 network = local_host & mask_host;
-    u32 candidates[MAX_SUBNET_HOSTS];
-    unsigned candidate_count = 0;
-    for (u32 offset = 1; offset < count - 1; ++offset) {
-        u32 candidate = network + offset;
-        if (candidate != local_host)
-            candidates[candidate_count++] = htonl(candidate);
-    }
-
+// Wait until the loader answers. The game renders the chat payload (and
+// therefore starts the loader) a little after the last line lands, so poll
+// with fresh connections until it does.
+static u64 wait_for_loader(u32 host_addr, InstallerProgress callback) {
     u64 deadline = armGetSystemTick() + armNsToTicks(LOADER_WAIT_NS);
     unsigned pass = 0;
     while (armGetSystemTick() < deadline && appletMainLoop()) {
         pass++;
-        progress(callback, "Scanning Wi-Fi for Switch 2", pass, 0);
-        for (unsigned base = 0; base < candidate_count; base += SCAN_BATCH) {
-            int sockets[SCAN_BATCH];
-            unsigned batch = candidate_count - base;
-            if (batch > SCAN_BATCH) batch = SCAN_BATCH;
-            fd_set writes;
-            FD_ZERO(&writes);
-            int max_fd = -1;
-
-            for (unsigned i = 0; i < batch; ++i) {
-                sockets[i] = socket(AF_INET, SOCK_STREAM, 0);
-                if (sockets[i] < 0 || set_nonblocking(sockets[i], true) < 0) {
-                    if (sockets[i] >= 0) close(sockets[i]);
-                    sockets[i] = -1;
-                    continue;
-                }
-                struct sockaddr_in target = {0};
-                target.sin_family = AF_INET;
-                target.sin_port = htons(LOADER_PORT);
-                target.sin_addr.s_addr = candidates[base + i];
-                int rc = connect(sockets[i], (const struct sockaddr *)&target,
-                                 sizeof(target));
-                if (rc < 0 && errno != EINPROGRESS) {
-                    close(sockets[i]);
-                    sockets[i] = -1;
-                    continue;
-                }
-                FD_SET(sockets[i], &writes);
-                if (sockets[i] > max_fd) max_fd = sockets[i];
-            }
-
-            if (max_fd >= 0) {
-                struct timeval timeout = {
-                    .tv_sec = 0,
-                    .tv_usec = SCAN_CONNECT_MS * 1000,
-                };
-                select(max_fd + 1, NULL, &writes, NULL, &timeout);
-            }
-            for (unsigned i = 0; i < batch; ++i) {
-                if (sockets[i] < 0) continue;
-                bool ready = FD_ISSET(sockets[i], &writes) &&
-                             connected_socket(sockets[i]);
-                if (ready && probe_loader_socket(sockets[i])) {
-                    u32 result = candidates[base + i];
-                    close(sockets[i]);
-                    for (unsigned j = i + 1; j < batch; ++j)
-                        if (sockets[j] >= 0) close(sockets[j]);
-                    return result;
-                }
-                close(sockets[i]);
-            }
-            if (armGetSystemTick() >= deadline || !appletMainLoop()) break;
+        progress(callback, "Waiting for loader on LDN", pass, 0);
+        int fd = connect_loader(host_addr, LOADER_CONNECT_MS);
+        if (fd >= 0) {
+            bool ok = probe_loader(fd);
+            close(fd);
+            if (ok) return armGetSystemTick();
         }
         svcSleepThread(250000000LL);
     }
@@ -300,13 +246,14 @@ static size_t encode_base64(char *out, const u8 *data, size_t size) {
     return written;
 }
 
-static InstallerResult upload_installer(u32 ip, InstallerProgress callback) {
+static InstallerResult upload_installer(u32 host_addr,
+                                        InstallerProgress callback) {
     static const char reset[] =
         "log('STARTING INSTALLER');window.__tpl=null;'reset'";
-    if (run_code(ip, reset, sizeof(reset) - 1,
+    if (run_code(host_addr, reset, sizeof(reset) - 1,
                  "Executed successfully", UPLOAD_TIMEOUT_NS) != 0)
         return installer_result("Could not reset remote installer", errno,
-                                ip, 0, 0, false);
+                                host_addr, 0, 0, false);
 
     const unsigned total = (save_template_bin_size + RAW_CHUNK - 1) / RAW_CHUNK;
     const char prefix[] = "(window.__tpl=window.__tpl||[]).push('";
@@ -314,7 +261,7 @@ static InstallerResult upload_installer(u32 ip, InstallerProgress callback) {
     char *command = malloc(command_capacity);
     if (!command)
         return installer_result("Not enough memory for save upload", ENOMEM,
-                                ip, 0, total, false);
+                                host_addr, 0, total, false);
 
     size_t raw_offset = 0;
     size_t encoded_total = 0;
@@ -332,15 +279,15 @@ static InstallerResult upload_installer(u32 ip, InstallerProgress callback) {
         if (suffix < 0 || (size_t)suffix >= command_capacity - offset) {
             free(command);
             return installer_result("Save upload command overflow", EOVERFLOW,
-                                    ip, chunk, total, false);
+                                    host_addr, chunk, total, false);
         }
         offset += (size_t)suffix;
-        progress(callback, "Uploading save template", chunk + 1, total);
-        if (run_code(ip, command, offset, "Executed successfully",
+        progress(callback, "Uploading save template over LDN", chunk + 1, total);
+        if (run_code(host_addr, command, offset, "Executed successfully",
                      UPLOAD_TIMEOUT_NS) != 0) {
             free(command);
             return installer_result("Save template upload failed", errno,
-                                    ip, chunk, total, false);
+                                    host_addr, chunk, total, false);
         }
         raw_offset += raw_size;
         encoded_total += encoded;
@@ -349,67 +296,29 @@ static InstallerResult upload_installer(u32 ip, InstallerProgress callback) {
 
     if (encoded_total != installer_template_base64_length)
         return installer_result("Save template length mismatch", EINVAL,
-                                ip, total, total, false);
+                                host_addr, total, total, false);
 
     progress(callback, "Writing persistent trigger save", total, total);
-    if (run_code(ip, installer_apply_js, sizeof(installer_apply_js) - 1,
+    if (run_code(host_addr, installer_apply_js, sizeof(installer_apply_js) - 1,
                  "INSTALL DONE", APPLY_TIMEOUT_NS) != 0)
         return installer_result("Switch 2 rejected the save installer", errno,
-                                ip, total, total, false);
-    return installer_result("Persistent trigger save installed", 0,
-                            ip, total, total, true);
+                                host_addr, total, total, false);
+    return installer_result("Persistent trigger save installed (LDN)", 0,
+                            host_addr, total, total, true);
 }
 
-InstallerResult installer_run(InstallerProgress callback) {
-    progress(callback, "Restoring Wi-Fi", 0, 0);
-    Result rc = nifmInitialize(NifmServiceType_User);
-    if (R_FAILED(rc))
-        return installer_result("nifmInitialize failed", rc, 0, 0, 0, false);
+// LDN-only install: the caller holds the LDN station open and the lobby
+// socket is still up, so this does not touch the Wi-Fi stack at all.
+InstallerResult installer_run(InstallerProgress callback,
+                              LdnIpv4Address host) {
+    u32 host_addr = host.addr;
+    if (host_addr == 0)
+        return installer_result("No LDN host address", EINVAL, 0, 0, 0, false);
 
-    NifmRequest request = {0};
-    bool request_open = false;
-    bool sockets_open = false;
-    InstallerResult result = installer_result("Wi-Fi did not reconnect",
-                                              ETIMEDOUT, 0, 0, 0, false);
-    rc = nifmCreateRequest(&request, true);
-    if (R_FAILED(rc)) {
-        result = installer_result("nifmCreateRequest failed", rc, 0, 0, 0, false);
-        goto finish;
+    if (!wait_for_loader(host_addr, callback)) {
+        return installer_result("Remote loader not answering on LDN",
+                                errno, host_addr, 0, 0, false);
     }
-    request_open = true;
-    rc = nifmRequestSubmit(&request);
-    if (R_FAILED(rc)) {
-        result = installer_result("nifmRequestSubmit failed", rc, 0, 0, 0, false);
-        goto finish;
-    }
-
-    u32 local_ip = 0, mask = 0, gateway = 0, dns1 = 0, dns2 = 0;
-    u64 wifi_deadline = armGetSystemTick() + armNsToTicks(WIFI_WAIT_NS);
-    while (armGetSystemTick() < wifi_deadline && appletMainLoop()) {
-        rc = nifmGetCurrentIpConfigInfo(&local_ip, &mask, &gateway, &dns1, &dns2);
-        if (R_SUCCEEDED(rc) && local_ip != 0 && mask != 0) break;
-        svcSleepThread(250000000LL);
-    }
-    if (local_ip == 0 || mask == 0) goto finish;
-
-    rc = socketInitializeDefault();
-    if (R_FAILED(rc)) {
-        result = installer_result("socketInitialize failed", rc, 0, 0, 0, false);
-        goto finish;
-    }
-    sockets_open = true;
-    u32 switch_ip = scan_for_loader(local_ip, mask, callback);
-    if (!switch_ip) {
-        result = installer_result("Remote loader not found on Wi-Fi", errno,
-                                  0, 0, 0, false);
-        goto finish;
-    }
-    progress(callback, "Remote loader found", 0, 0);
-    result = upload_installer(switch_ip, callback);
-
-finish:
-    if (sockets_open) socketExit();
-    if (request_open) nifmRequestClose(&request);
-    nifmExit();
-    return result;
+    progress(callback, "Remote loader found on LDN", 0, 0);
+    return upload_installer(host_addr, callback);
 }

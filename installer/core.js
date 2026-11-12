@@ -1266,22 +1266,27 @@
         }
 
         async function remote_js_loader() {
-            try { Network.resetNetworkCommunication(); } catch (e) {}
+            // LDN-only mode: armed by the preamble in source/chat_payload.h
+            // before this file is evaluated over the LDN chat transport. The
+            // listener binds 0.0.0.0:9026, which is already reachable on the
+            // LDN subnet, so no Wi-Fi/LAN address is required and the game's
+            // network communication is left alone (resetting it could tear
+            // down the local wireless room). Without the flag (persistent
+            // trigger path) the original Wi-Fi reset still runs first.
+            const ldn_mode = window.__ldn_loader === true;
+            if (ldn_mode) {
+                await log("LDN-only mode: no Wi-Fi required");
+            } else {
+                try { Network.resetNetworkCommunication(); } catch (e) {}
+            }
 
             let setupFails = 0;
 
             while (true) {
-                let current_ip = get_current_ip();
-                let announced = false;
-                while (current_ip === null) {
-                    if (!announced) {
-                        await log("network down - waiting for network..");
-                        announced = true;
-                    }
-                    await sleep(2000);
-                    current_ip = get_current_ip();
-                }
-
+                // Bring the listener up before waiting for any address. The
+                // bind is to 0.0.0.0, so it accepts on whatever interface the
+                // console has - the LDN subnet here, or Wi-Fi/LAN later.
+                // get_current_ip() is only used to report where to connect.
                 let sock_fd;
                 try {
                     sock_fd = create_socket();
@@ -1296,12 +1301,36 @@
                     continue;
                 }
 
-                const network_str = current_ip + ":" + PORT;
+                let current_ip = get_current_ip();
+                if (!current_ip) {
+                    // The bind is wildcard, so the listener is reachable on
+                    // whatever interface the console has - here the LDN
+                    // subnet. Without Wi-Fi there is simply no address to
+                    // report, and none is needed to connect.
+                    if (ldn_mode) {
+                        current_ip = "LDN subnet";
+                        await log("listener up on LDN subnet :" + PORT);
+                    } else {
+                        current_ip = "0.0.0.0";
+                        await log("no Wi-Fi address yet - listener active on :" + PORT);
+                    }
+                }
+                let network_str = current_ip + ":" + PORT;
 
                 let acceptFails = 0;
                 let badConns = 0;
                 while (true) {
                     try {
+                        // Refresh the reported address in case Wi-Fi came up
+                        // (or dropped) while the accept loop was waiting.
+                        if (!ldn_mode) {
+                            const probe = get_current_ip();
+                            if (probe && probe !== current_ip) {
+                                current_ip = probe;
+                                network_str = probe + ":" + PORT;
+                                await log("network up at " + network_str);
+                            }
+                        }
                         await log("Awaiting payload at " + network_str);
 
                         write32(addrlen, 16);

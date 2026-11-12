@@ -29,7 +29,12 @@ def c_string_lines(value, width=96):
 
 def main():
     core = io.open(CORE, encoding="utf-8").read().replace("\r\n", "\n")
-    wrapped = ("(async function() {\ntry{\n" + core +
+    # Arm LDN-only mode so the loader starts its :9026 listener without
+    # waiting for a Wi-Fi/LAN address (see remote_js_loader in core.js). The
+    # wildcard bind keeps the Wi-Fi/LAN path working too; this just stops the
+    # loader from stalling at the "network down - waiting for network.." loop
+    # on a console that only has local wireless.
+    wrapped = ("(async function() {\ntry{\nwindow.__ldn_loader = true;\n" + core +
                "\n} catch (e) {\nawait log('EXCEPTION: ' + e.message);\n"
                "await log(e.stack);\n}\n})();")
 
