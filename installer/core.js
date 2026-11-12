@@ -1281,41 +1281,45 @@
             }
 
             let setupFails = 0;
+            let announced = false;
 
             while (true) {
-                // Bring the listener up before waiting for any address. The
-                // bind is to 0.0.0.0, so it accepts on whatever interface the
-                // console has - the LDN subnet here, or Wi-Fi/LAN later.
-                // get_current_ip() is only used to report where to connect.
-                let sock_fd;
+                let current_ip = get_current_ip();
+                let sock_fd = null;
+                let bind_error = null;
                 try {
                     sock_fd = create_socket();
-                    setupFails = 0;
                 } catch (err) {
-                    setupFails++;
-                    if (setupFails % 3 === 0) {
-                        try { Network.resetNetworkCommunication(); } catch (e) {}
+                    bind_error = err;
+                }
+
+                if (sock_fd === null && current_ip === null) {
+                    // LDN-only mode: no Wi-Fi IP is available. Wait for a
+                    // usable network before retrying, exactly like before.
+                    if (!announced) {
+                        await log("network down - waiting for network..");
+                        announced = true;
                     }
-                    await log("listener setup failed: " + err.message);
                     await sleep(2000);
                     continue;
                 }
 
-                let current_ip = get_current_ip();
-                if (!current_ip) {
-                    // The bind is wildcard, so the listener is reachable on
-                    // whatever interface the console has - here the LDN
-                    // subnet. Without Wi-Fi there is simply no address to
-                    // report, and none is needed to connect.
-                    if (ldn_mode) {
-                        current_ip = "LDN subnet";
-                        await log("listener up on LDN subnet :" + PORT);
-                    } else {
-                        current_ip = "0.0.0.0";
-                        await log("no Wi-Fi address yet - listener active on :" + PORT);
+                if (sock_fd === null) {
+                    setupFails++;
+                    if (setupFails % 3 === 0) {
+                        try { Network.resetNetworkCommunication(); } catch (e) {}
                     }
+                    await log("listener setup failed: " + bind_error.message);
+                    await sleep(2000);
+                    continue;
                 }
-                let network_str = current_ip + ":" + PORT;
+
+                setupFails = 0;
+                if (current_ip === null) {
+                    await log("no network IP - listening on all interfaces (LDN reachable)");
+                }
+
+                const network_str = (current_ip === null ? "0.0.0.0" : current_ip) + ":" + PORT;
 
                 let acceptFails = 0;
                 let badConns = 0;

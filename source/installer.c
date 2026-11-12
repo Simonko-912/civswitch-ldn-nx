@@ -28,7 +28,7 @@
 #include <unistd.h>
 
 #define LOADER_PORT 9026
-#define LOADER_CONNECT_MS 3000
+#define CONNECT_PAUSE_NS 500000000ULL
 #define LOADER_WAIT_NS 45000000000ULL
 #define UPLOAD_TIMEOUT_NS 30000000000ULL
 #define APPLY_TIMEOUT_NS 300000000000ULL
@@ -54,7 +54,7 @@ static int set_nonblocking(int fd, bool enabled) {
     if (flags < 0) return -1;
     if (enabled) flags |= O_NONBLOCK;
     else flags &= ~O_NONBLOCK;
-    return fcntl(fd, F_SETFL, flags);
+    return fcntl(fd, F_SETFL, 0);
 }
 
 static int send_all(int fd, const char *data, size_t size) {
@@ -197,22 +197,26 @@ static bool probe_loader(int fd) {
                               "Executed successfully", 3000000000ULL) == 0;
 }
 
-// Wait until the loader answers. The game renders the chat payload (and
-// therefore starts the loader) a little after the last line lands, so poll
-// with fresh connections until it does.
-static u64 wait_for_loader(u32 host_addr, InstallerProgress callback) {
+// LDN-only discovery: the loader IP is already known from the lobby, so
+// connect directly and retry for LOADER_WAIT_NS while the Switch 2 boots
+// up its loader after the reboot/Load Game step. No Wi-Fi is touched.
+static u32 wait_for_loader(u32 host_ip, InstallerProgress callback) {
     u64 deadline = armGetSystemTick() + armNsToTicks(LOADER_WAIT_NS);
     unsigned pass = 0;
     while (armGetSystemTick() < deadline && appletMainLoop()) {
         pass++;
-        progress(callback, "Waiting for loader on LDN", pass, 0);
-        int fd = connect_loader(host_addr, LOADER_CONNECT_MS);
-        if (fd >= 0) {
-            bool ok = probe_loader(fd);
-            close(fd);
-            if (ok) return armGetSystemTick();
+        progress(callback, "Waiting for loader over local wireless", pass, 0);
+        int fd = connect_ip(host_ip, 3000);
+        if (fd < 0) {
+            svcSleepThread(CONNECT_PAUSE_NS);
+            continue;
         }
-        svcSleepThread(250000000LL);
+        if (probe_loader_socket(fd)) {
+            close(fd);
+            return host_ip;
+        }
+        close(fd);
+        svcSleepThread(CONNECT_PAUSE_NS);
     }
     errno = ETIMEDOUT;
     return 0;
@@ -302,23 +306,34 @@ static InstallerResult upload_installer(u32 host_addr,
     if (run_code(host_addr, installer_apply_js, sizeof(installer_apply_js) - 1,
                  "INSTALL DONE", APPLY_TIMEOUT_NS) != 0)
         return installer_result("Switch 2 rejected the save installer", errno,
-                                host_addr, total, total, false);
-    return installer_result("Persistent trigger save installed (LDN)", 0,
-                            host_addr, total, total, true);
+                                ip, total, total, true);
+    return installer_result("Persistent trigger save installed", 0,
+                            ip, total, total, true);
 }
 
-// LDN-only install: the caller holds the LDN station open and the lobby
-// socket is still up, so this does not touch the Wi-Fi stack at all.
-InstallerResult installer_run(InstallerProgress callback,
-                              LdnIpv4Address host) {
-    u32 host_addr = host.addr;
-    if (host_addr == 0)
-        return installer_result("No LDN host address", EINVAL, 0, 0, 0, false);
+InstallerResult installer_run(u32 host_ip, InstallerProgress callback) {
+    if (host_ip == 0)
+        return installer_result("No local wireless IP for Switch 2", 0,
+                                0, 0, 0, false);
 
-    if (!wait_for_loader(host_addr, callback)) {
-        return installer_result("Remote loader not answering on LDN",
-                                errno, host_addr, 0, 0, false);
+    progress(callback, "Connecting over local wireless", 0, 0);
+    Result rc = socketInitializeDefault();
+    if (R_FAILED(rc))
+        return installer_result("socketInitialize failed", rc, 0, 0, 0, false);
+
+    bool sockets_open = true;
+    InstallerResult result = installer_result("Remote loader not found over local wireless",
+                                              ETIMEDOUT, 0, 0, 0, false);
+    u32 loader_ip = wait_for_loader(host_ip, callback);
+    if (!loader_ip) {
+        result = installer_result("Remote loader not found over local wireless",
+                                  errno, host_ip, 0, 0, false);
+        goto finish;
     }
-    progress(callback, "Remote loader found on LDN", 0, 0);
-    return upload_installer(host_addr, callback);
+    progress(callback, "Remote loader found over local wireless", 0, 0);
+    result = upload_installer(loader_ip, callback);
+
+finish:
+    if (sockets_open) socketExit();
+    return result;
 }

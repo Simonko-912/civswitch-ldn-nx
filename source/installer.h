@@ -15,10 +15,8 @@ typedef struct {
 typedef void (*InstallerProgress)(const char *message, unsigned step,
                                   unsigned total);
 
-// Runs the persistent-save install over the LDN link to `host` (the joined
-// lobby's host address, from LdnNetworkInfo.nodes[0].ip_addr). The caller
-// must keep the LDN station and the lobby socket open until this returns.
-InstallerResult installer_run(InstallerProgress on_progress,
-                              LdnIpv4Address host);
+// LDN-only: the Switch 2 loader is reachable on its local-wireless IP,
+// which the caller learned from the lobby node list.
+InstallerResult installer_run(u32 host_ip, InstallerProgress on_progress);
 
 #endif
