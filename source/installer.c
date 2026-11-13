@@ -331,30 +331,51 @@ InstallerResult installer_run(u32 host_ip, InstallerProgress callback) {
     progress(callback, "Remote loader found over local wireless", 0, 0);
     result = upload_installer(loader_ip, callback);
 
-    // Mirror of the PC installer's optional payload.js argument: when a
-    // custom payload exists on the SD card, hand it to the running loader
-    // over the same LDN connection. This is the whole point of the LDN
-    // port - no Wi-Fi/LAN is involved anywhere.
-    if (result.completed) {
-        char *payload = NULL;
-        int len = read_sd_file("sdmc:/switch/payload.js", &payload);
-        if (len > 0) {
-            progress(callback, "Sending payload.js over local wireless", 0, 0);
-            if (run_code(loader_ip, payload, (size_t)len,
-                         "Executed successfully", UPLOAD_TIMEOUT_NS) == 0) {
-                result = installer_result("payload.js sent over local wireless",
-                                          0, loader_ip, result.total,
-                                          result.total, true);
-            } else {
-                result = installer_result("payload.js was not accepted", errno,
-                                          loader_ip, result.step,
-                                          result.total, true);
-            }
-            free(payload);
-        }
-    }
-
 finish:
     if (sockets_open) socketExit();
+    return result;
+}
+
+// ZL path: deliver sdmc:/switch/payload.js to the running loader over LDN
+// without touching the installed persistent trigger save. Mirrors the PC
+// installer's optional payload.js argument.
+InstallerResult installer_send_payload(u32 host_ip, InstallerProgress callback) {
+    if (host_ip == 0)
+        return installer_result("No local wireless IP for Switch 2", 0,
+                                0, 0, 0, false);
+
+    progress(callback, "Connecting over local wireless", 0, 0);
+    Result rc = socketInitializeDefault();
+    if (R_FAILED(rc))
+        return installer_result("socketInitialize failed", rc, 0, 0, 0, false);
+
+    InstallerResult result = installer_result(
+        "Remote loader not found over local wireless", ETIMEDOUT, 0, 0, 0, false);
+    u32 loader_ip = wait_for_loader(host_ip, callback);
+    if (!loader_ip) {
+        result = installer_result("Remote loader not found over local wireless",
+                                  errno, host_ip, 0, 0, false);
+        socketExit();
+        return result;
+    }
+
+    char *payload = NULL;
+    int len = read_sd_file("sdmc:/switch/payload.js", &payload);
+    if (len <= 0) {
+        result = installer_result("No sdmc:/switch/payload.js found", 0,
+                                  loader_ip, 0, 0, false);
+    } else {
+        progress(callback, "Sending payload.js over local wireless", 0, 0);
+        if (run_code(loader_ip, payload, (size_t)len,
+                     "Executed successfully", UPLOAD_TIMEOUT_NS) == 0) {
+            result = installer_result("payload.js sent over local wireless", 0,
+                                      loader_ip, 1, 1, true);
+        } else {
+            result = installer_result("payload.js was not accepted", errno,
+                                      loader_ip, 1, 1, false);
+        }
+        free(payload);
+    }
+    socketExit();
     return result;
 }

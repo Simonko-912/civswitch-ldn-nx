@@ -44,7 +44,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.3.7 - one-click save\n\n");
+    printf("CivSwitch LDN NX v1.3.8 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -64,7 +64,7 @@ static void report(const char *operation, Result result) {
 static void guard_block(PadState *pad) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.3.7\n\n");
+        printf("CivSwitch LDN NX v1.3.8\n\n");
         printf("BLOCKED: ldn_mitm plugin detected\n\n");
         printf("ldn_mitm is intercepting the local\n");
         printf("wireless service. This app needs real\n");
@@ -94,7 +94,7 @@ static void guard_block(PadState *pad) {
 static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.3.7\n\n");
+        printf("CivSwitch LDN NX v1.3.8\n\n");
         printf("PLEASE USE APPLET MODE\n\n");
         printf("This app is running in application\n");
         printf("mode (hold-R title override). In\n");
@@ -118,8 +118,7 @@ static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
     }
 }
 
-static void close_station(void) {
-    game_close();
+static void close_station(void) {    game_close();
     game_joined = false;
     if (connected && !ldn_keepalive) {
         ldnDisconnect();
@@ -168,6 +167,37 @@ static void scan_networks(void) {
     if (network_count > MAX_NETWORKS) network_count = MAX_NETWORKS;
     // Discard empty WiFi placeholders so the count reflects real rooms only.
     compact_networks();
+}
+
+// Identify the peer console as the lobby node whose LDN IP is not this
+// console's own. Prefer LIVE station info (the scanned list can predate
+// the other console joining); fall back to the scan copy, then the lobby
+// host. Returns the host-byte-order address, or 0 when no node is known.
+static u32 select_peer_ip(void) {
+    LdnIpv4Address own_addr;
+    LdnSubnetMask own_mask;
+    bool own_valid = R_SUCCEEDED(ldnGetIpv4Address(&own_addr, &own_mask));
+    const LdnNetworkInfo *node_source;
+    LdnNetworkInfo live_net;
+    if (connected && R_SUCCEEDED(ldnGetNetworkInfo(&live_net)))
+        node_source = &live_net;
+    else if (network_count > 0)
+        node_source = &networks[selected];
+    else
+        return 0;
+
+    u32 peer_ip = 0;
+    if (own_valid) {
+        for (unsigned i = 0; i < node_source->node_count; i++) {
+            if (node_source->nodes[i].ip_addr.addr != own_addr.addr) {
+                peer_ip = node_source->nodes[i].ip_addr.addr;
+                break;
+            }
+        }
+    }
+    if (peer_ip == 0 && node_source->node_count > 0)
+        peer_ip = node_source->nodes[0].ip_addr.addr;
+    return peer_ip;
 }
 
 static void print_ip(LdnIpv4Address addr) {
@@ -231,8 +261,8 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.3.7\n");
-    printf("A join  R loader  ZR one-click save\n\n");
+    printf("CivSwitch LDN NX v1.3.8\n");
+    printf("A join  R loader  ZR save install  ZL payload.js\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
     if (network_count > 0) {
@@ -290,7 +320,8 @@ static void draw(void) {
             printf("DONE: reboot S2, then choose Load Game.\n");
     }
     printf("\nUp/Down select  X scan  A join lobby\n");
-    printf("Y test  R loader only  ZR replace saves\n");
+    printf("Y test  R loader only  ZR save install\n");
+    printf("ZL payload.js only (keeps the installed save)\n");
     printf("LDN-only: no Wi-Fi needed after the lobby join.\n");
     printf("WARNING: ZR deletes all single-player saves.\n");
     printf("B leave  + exit\n");
@@ -372,8 +403,7 @@ int main(int argc, char **argv) {
             redraw = true;
         }
         if ((keys & HidNpadButton_ZR) && connected) {
-            bool loader_sent = false;
-            if (game_joined) {
+            bool loader_sent = false;            if (game_joined) {
                 game_result = game_send(true, show_progress);
                 loader_sent = game_result.completed;
             } else {
@@ -391,66 +421,36 @@ int main(int argc, char **argv) {
             game_tested = true;
             install_tested = false;
             if (loader_sent) {
-                // LdnIpv4Address is host byte order (see game_probe.c, which
-                // htonl()s it for sockets); the installer wants network
-                // order for s_addr.
-                //
-                // The loader runs on the PEER console, so dial its IP. Do
-                // NOT blindly use nodes[0]: that is the lobby host
-                // (AccessPoint), and if THIS console hosts the lobby
-                // (swapped roles) nodes[0] is our own IP, so the connect
-                // times out (ETIMEDOUT 0x74) while the peer idles at
-                // "Awaiting payload". Identify the peer as the node whose
-                // IP is not ours. Prefer LIVE station info (the scanned
-                // list can predate the other console joining); fall back
-                // to the scan copy, then the lobby host.
+                // Dial the PEER console (select_peer_ip: live node list,
+                // skip our own IP); installer wants network order.
                 LdnIpv4Address own_addr;
                 LdnSubnetMask own_mask;
                 bool own_valid = R_SUCCEEDED(ldnGetIpv4Address(&own_addr, &own_mask));
-                u32 peer_ip = 0;
-                const LdnNetworkInfo *node_source = NULL;
-                LdnNetworkInfo live_net;
-                if (connected && R_SUCCEEDED(ldnGetNetworkInfo(&live_net))) {
-                    node_source = &live_net;
-                } else {
-                    node_source = &networks[selected];
-                }
-                if (own_valid) {
-                    for (unsigned i = 0; i < node_source->node_count; i++) {
-                        if (node_source->nodes[i].ip_addr.addr != own_addr.addr) {
-                            peer_ip = node_source->nodes[i].ip_addr.addr;
-                            break;
-                        }
-                    }
-                }
-                if (peer_ip == 0 && node_source->node_count > 0)
-                    peer_ip = node_source->nodes[0].ip_addr.addr;
+                u32 peer_ip = select_peer_ip();
                 if (peer_ip == 0) {
                     // No usable node list yet; installer_run(0) reports it.
                     install_result = installer_run(0, show_install_progress);
-                    install_tested = true;
                 } else {
-                LdnIpv4Address peer_struct;
-                peer_struct.addr = peer_ip;
-                printf("\nDialing loader on peer LDN IP ");
-                print_ip(peer_struct);
-                printf(":9026");
-                if (own_valid) {
-                    printf(" (this console: ");
-                    print_ip(own_addr);
-                    printf(")");
+                    LdnIpv4Address peer_struct;
+                    peer_struct.addr = peer_ip;
+                    printf("\nDialing loader on peer LDN IP ");
+                    print_ip(peer_struct);
+                    printf(":9026");
+                    if (own_valid) {
+                        printf(" (this console: ");
+                        print_ip(own_addr);
+                        printf(")");
+                    }
+                    if (peer_ip == own_addr.addr) {
+                        printf("WARNING: peer IP == this console's IP. Check that\n"
+                               "Switch 2 hosts the lobby and both consoles are in it.\n");
+                    }
+                    printf("\n");
+                    install_result = installer_run(htonl(peer_ip), show_install_progress);
                 }
-                if (peer_ip == own_addr.addr) {
-                    printf("WARNING: peer IP == this console's IP. Check that\n"
-                           "Switch 2 hosts the lobby and both consoles are in it.\n");
-                }
-                printf("\n");
-                install_result = installer_run(htonl(peer_ip), show_install_progress);
                 install_tested = true;
-                }
             }
-            ldn_keepalive = false;
-            // Tear the LDN station + connection back down, then exit the
+            ldn_keepalive = false;            // Tear the LDN station + connection back down, then exit the
             // service. (The original called ldnExit() *before*
             // installer_run because it uploaded over Wi-Fi; LDN-only must
             // keep LDN up through the upload.)
@@ -465,6 +465,31 @@ int main(int argc, char **argv) {
             if (ldn_initialized) {
                 ldnExit();
                 ldn_initialized = false;
+            }
+            network_count = 0;
+            user_scanned = false;
+            redraw = true;
+        }
+        if ((keys & HidNpadButton_ZL) && connected) {
+            // ZL: deliver sdmc:/switch/payload.js to the running loader
+            // only - the persistent trigger save stays as installed.
+            u32 peer_ip = select_peer_ip();
+            ldn_keepalive = true;
+            close_station();
+            if (peer_ip == 0)
+                install_result = installer_send_payload(0, show_install_progress);
+            else
+                install_result = installer_send_payload(htonl(peer_ip),
+                                                        show_install_progress);
+            install_tested = true;
+            ldn_keepalive = false;
+            if (connected) {
+                ldnDisconnect();
+                connected = false;
+            }
+            if (station_open) {
+                ldnCloseStation();
+                station_open = false;
             }
             network_count = 0;
             user_scanned = false;
