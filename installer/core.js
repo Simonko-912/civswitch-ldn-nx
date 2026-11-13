@@ -1266,21 +1266,14 @@
         }
 
         async function remote_js_loader() {
-            // LDN-only mode: armed by the preamble in source/chat_payload.h
-            // before this file is evaluated over the LDN chat transport. The
-            // listener binds 0.0.0.0:9026, which is already reachable on the
-            // LDN subnet, so no Wi-Fi/LAN address is required and the game's
-            // network communication is left alone (resetting it could tear
-            // down the local wireless room). Without the flag (persistent
-            // trigger path) the original Wi-Fi reset still runs first.
-            const ldn_mode = window.__ldn_loader === true;
-            if (ldn_mode) {
-                await log("LDN-only mode: no Wi-Fi required");
-            } else {
-                try { Network.resetNetworkCommunication(); } catch (e) {}
-            }
-
+            // Do NOT reset network communication up front. On a pure local
+            // wireless (LDN) lobby the reset drops the lobby connection the
+            // chat payload just arrived through, so the dialing console
+            // times out against a stale address while this loader idles at
+            // "Awaiting payload". The periodic reset in the retry paths
+            // below still revives genuinely dead Wi-Fi stacks.
             let setupFails = 0;
+            let waitTicks = 0;
             let announced = false;
 
             while (true) {
@@ -1304,6 +1297,13 @@
                             await log("listener setup failed: " + bind_error.message);
                         }
                         announced = true;
+                    }
+                    // Wi-Fi consoles: revive a genuinely down stack after a
+                    // few plain waits, like before, but not before the very
+                    // first bind attempt had a fair chance.
+                    waitTicks++;
+                    if (waitTicks % 3 === 0) {
+                        try { Network.resetNetworkCommunication(); } catch (e) {}
                     }
                     await sleep(2000);
                     continue;
