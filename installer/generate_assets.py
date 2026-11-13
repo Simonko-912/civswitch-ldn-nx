@@ -29,7 +29,7 @@ def c_string_lines(value, width=96):
 
 def main():
     core = io.open(CORE, encoding="utf-8").read().replace("\r\n", "\n")
-    wrapped = ("(async function() {\ntry{\n" + core +
+    wrapped = ("(async function() {\ntry{\nwindow.__civ_persist=1;\n" + core +
                "\n} catch (e) {\nawait log('EXCEPTION: ' + e.message);\n"
                "await log(e.stack);\n}\n})();")
 

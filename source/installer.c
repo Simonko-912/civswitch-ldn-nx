@@ -294,6 +294,21 @@ static InstallerResult upload_installer(u32 ip, InstallerProgress callback) {
                             ip, total, total, true);
 }
 
+static int read_sd_file(const char *path, char **out_buf) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
+    long size = ftell(f);
+    if (fseek(f, 0, SEEK_SET) != 0 || size <= 0) { fclose(f); return 0; }
+    char *buf = malloc((size_t)size + 1);
+    if (!buf) { fclose(f); return 0; }
+    size_t got = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    buf[got] = 0;
+    *out_buf = buf;
+    return (int)got;
+}
+
 InstallerResult installer_run(u32 host_ip, InstallerProgress callback) {
     if (host_ip == 0)
         return installer_result("No local wireless IP for Switch 2", 0,
@@ -315,6 +330,29 @@ InstallerResult installer_run(u32 host_ip, InstallerProgress callback) {
     }
     progress(callback, "Remote loader found over local wireless", 0, 0);
     result = upload_installer(loader_ip, callback);
+
+    // Mirror of the PC installer's optional payload.js argument: when a
+    // custom payload exists on the SD card, hand it to the running loader
+    // over the same LDN connection. This is the whole point of the LDN
+    // port - no Wi-Fi/LAN is involved anywhere.
+    if (result.completed) {
+        char *payload = NULL;
+        int len = read_sd_file("sdmc:/switch/payload.js", &payload);
+        if (len > 0) {
+            progress(callback, "Sending payload.js over local wireless", 0, 0);
+            if (run_code(loader_ip, payload, (size_t)len,
+                         "Executed successfully", UPLOAD_TIMEOUT_NS) == 0) {
+                result = installer_result("payload.js sent over local wireless",
+                                          0, loader_ip, result.total,
+                                          result.total, true);
+            } else {
+                result = installer_result("payload.js was not accepted", errno,
+                                          loader_ip, result.step,
+                                          result.total, true);
+            }
+            free(payload);
+        }
+    }
 
 finish:
     if (sockets_open) socketExit();
