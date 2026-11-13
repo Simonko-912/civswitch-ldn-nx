@@ -1266,29 +1266,28 @@
         }
 
         function try_host_ldn() {
-            // Persistent-save boot with no Wi-Fi: ask the game to open a
-            // local-wireless (LDN) lobby so the other console has a network
-            // to join and can deliver payload.js over it. The exact
-            // nn::network::* wrapper exposed to the JS layer differs by
-            // game build, so probe the plausible names and use the first
-            // callable one. Chat-injected runs skip this (their lobby
-            // already exists - the payload arrived through it).
-            const names = ["createNetwork", "CreateNetwork", "openNetwork",
-                           "startNetwork", "hostNetwork", "createLobby",
-                           "CreateLobby", "host", "create"];
-            const scopes = [];
-            try { if (typeof Network === "object" && Network) scopes.push(Network); } catch (e) {}
-            try { if (window.Network && scopes.indexOf(window.Network) < 0) scopes.push(window.Network); } catch (e) {}
-            for (const scope of scopes) {
-                for (const n of names) {
+            // Persistent-save boot with no Wi-Fi: open a local-wireless
+            // (LDN) lobby so the other console has a network to join and
+            // can deliver payload.js over it. Verified against the game's
+            // own shipped scripts (modules/base-standard/ui/automation/
+            // automation-base-play-game.js and mp-browser-new.js): the
+            // hosting entry point is Network.hostGame(serverType) with the
+            // ServerType enum, and Network.resetNetworkCommunication()
+            // exists as used here. Local wireless = SERVER_TYPE_WIRELESS;
+            // fall back to SERVER_TYPE_NONE then bare hostGame.
+            try {
+                if (typeof Network !== "undefined" && Network &&
+                    typeof Network.hostGame === "function") {
+                    let st = 0;
                     try {
-                        if (typeof scope[n] === "function") {
-                            scope[n]();
-                            return "Network." + n;
-                        }
+                        if (typeof ServerType !== "undefined" && ServerType &&
+                            ServerType.SERVER_TYPE_WIRELESS !== undefined)
+                            st = ServerType.SERVER_TYPE_WIRELESS;
                     } catch (e) {}
+                    Network.hostGame(st);
+                    return "Network.hostGame(WIRELESS)";
                 }
-            }
+            } catch (e) {}
             return null;
         }
 
