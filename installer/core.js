@@ -1265,7 +1265,40 @@
             return a + "." + b + "." + c + "." + d;
         }
 
+        function try_host_ldn() {
+            // Persistent-save boot with no Wi-Fi: ask the game to open a
+            // local-wireless (LDN) lobby so the other console has a network
+            // to join and can deliver payload.js over it. The exact
+            // nn::network::* wrapper exposed to the JS layer differs by
+            // game build, so probe the plausible names and use the first
+            // callable one. Chat-injected runs skip this (their lobby
+            // already exists - the payload arrived through it).
+            const names = ["createNetwork", "CreateNetwork", "openNetwork",
+                           "startNetwork", "hostNetwork", "createLobby",
+                           "CreateLobby", "host", "create"];
+            const scopes = [];
+            try { if (typeof Network === "object" && Network) scopes.push(Network); } catch (e) {}
+            try { if (window.Network && scopes.indexOf(window.Network) < 0) scopes.push(window.Network); } catch (e) {}
+            for (const scope of scopes) {
+                for (const n of names) {
+                    try {
+                        if (typeof scope[n] === "function") {
+                            scope[n]();
+                            return "Network." + n;
+                        }
+                    } catch (e) {}
+                }
+            }
+            return null;
+        }
+
         async function remote_js_loader() {
+            // Persistent-save path only: when no Wi-Fi/LAN IP shows up, host
+            // a local-wireless lobby once so the homebrew console can find
+            // this one without anyone touching the game menus. Chat-injected
+            // runs (window.__civ_persist unset) keep the v1.3.4 behavior.
+            const persist = (window.__civ_persist === 1);
+            let ldnHosted = !persist;
             // Do NOT reset network communication up front. On a pure local
             // wireless (LDN) lobby the reset drops the lobby connection the
             // chat payload just arrived through, so the dialing console
@@ -1278,6 +1311,17 @@
 
             while (true) {
                 let current_ip = get_current_ip();
+                if (!ldnHosted && current_ip === null) {
+                    await log("no wifi/lan - opening local wireless lobby");
+                    const api = try_host_ldn();
+                    await log(api ? "lobby hosted via " + api
+                                  : "no lobby api found, listening anyway");
+                    ldnHosted = true;
+                    // Give the interface a moment to come up, then re-probe
+                    // so the bind rides the fresh LDN route.
+                    await sleep(1500);
+                    continue;
+                }
                 let sock_fd = null;
                 let bind_error = null;
                 try {
