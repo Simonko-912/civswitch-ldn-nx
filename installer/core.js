@@ -1266,9 +1266,14 @@
         }
 
         async function remote_js_loader() {
-            try { Network.resetNetworkCommunication(); } catch (e) {}
-
+            // Do NOT reset network communication up front. On a pure local
+            // wireless (LDN) lobby the reset drops the lobby connection the
+            // chat payload just arrived through, so the dialing console
+            // times out against a stale address while this loader idles at
+            // "Awaiting payload". The periodic reset in the retry paths
+            // below still revives genuinely dead Wi-Fi stacks.
             let setupFails = 0;
+            let waitTicks = 0;
             let announced = false;
 
             while (true) {
@@ -1292,6 +1297,13 @@
                             await log("listener setup failed: " + bind_error.message);
                         }
                         announced = true;
+                    }
+                    // Wi-Fi consoles: revive a genuinely down stack after a
+                    // few plain waits, like before, but not before the very
+                    // first bind attempt had a fair chance.
+                    waitTicks++;
+                    if (waitTicks % 3 === 0) {
+                        try { Network.resetNetworkCommunication(); } catch (e) {}
                     }
                     await sleep(2000);
                     continue;
