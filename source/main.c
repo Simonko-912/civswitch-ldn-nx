@@ -44,7 +44,7 @@ static void show_progress(unsigned sent, unsigned total) {
 static void show_install_progress(const char *message, unsigned step,
                                   unsigned total) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.3.6 - one-click save\n\n");
+    printf("CivSwitch LDN NX v1.3.7 - one-click save\n\n");
     printf("%s\n", message);
     if (total) printf("Progress: %u/%u\n", step, total);
     printf("\nDo not close the game or either console.\n");
@@ -64,7 +64,7 @@ static void report(const char *operation, Result result) {
 static void guard_block(PadState *pad) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.3.6\n\n");
+        printf("CivSwitch LDN NX v1.3.7\n\n");
         printf("BLOCKED: ldn_mitm plugin detected\n\n");
         printf("ldn_mitm is intercepting the local\n");
         printf("wireless service. This app needs real\n");
@@ -94,7 +94,7 @@ static void guard_block(PadState *pad) {
 static void app_mode_block(PadState *pad, const LdnGuardInfo *guard) {
     for (;;) {
         consoleClear();
-        printf("CivSwitch LDN NX v1.3.6\n\n");
+        printf("CivSwitch LDN NX v1.3.7\n\n");
         printf("PLEASE USE APPLET MODE\n\n");
         printf("This app is running in application\n");
         printf("mode (hold-R title override). In\n");
@@ -231,7 +231,7 @@ static void connect_selected(void) {
 
 static void draw(void) {
     consoleClear();
-    printf("CivSwitch LDN NX v1.3.6\n");
+    printf("CivSwitch LDN NX v1.3.7\n");
     printf("A join  R loader  ZR one-click save\n\n");
     printf("%s: 0x%08X\n", last_operation, last_result);
     printf("Found %d LDN network(s)\n\n", network_count);
@@ -371,9 +371,19 @@ int main(int argc, char **argv) {
             game_tested = true;
             redraw = true;
         }
-        if ((keys & HidNpadButton_ZR) && game_joined) {
-            game_result = game_send(true, show_progress);
-            bool loader_sent = game_result.completed;
+        if ((keys & HidNpadButton_ZR) && connected) {
+            bool loader_sent = false;
+            if (game_joined) {
+                game_result = game_send(true, show_progress);
+                loader_sent = game_result.completed;
+            } else {
+                // Persistent-save mode: loading the trigger save already
+                // started the loader on the peer console, so the chat
+                // injection is unnecessary even when the game-level lobby
+                // handshake stayed silent (No replay from game lobby).
+                // installer_run still waits for the loader before dialing.
+                loader_sent = true;
+            }
             // Only keep the LDN connection alive when the loader was
             // actually sent: it is then reachable exclusively through it.
             ldn_keepalive = loader_sent;
@@ -413,7 +423,13 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
-                if (peer_ip == 0) peer_ip = node_source->nodes[0].ip_addr.addr;
+                if (peer_ip == 0 && node_source->node_count > 0)
+                    peer_ip = node_source->nodes[0].ip_addr.addr;
+                if (peer_ip == 0) {
+                    // No usable node list yet; installer_run(0) reports it.
+                    install_result = installer_run(0, show_install_progress);
+                    install_tested = true;
+                } else {
                 LdnIpv4Address peer_struct;
                 peer_struct.addr = peer_ip;
                 printf("\nDialing loader on peer LDN IP ");
@@ -431,6 +447,7 @@ int main(int argc, char **argv) {
                 printf("\n");
                 install_result = installer_run(htonl(peer_ip), show_install_progress);
                 install_tested = true;
+                }
             }
             ldn_keepalive = false;
             // Tear the LDN station + connection back down, then exit the

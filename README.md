@@ -1,4 +1,4 @@
-# CivSwitch-LDN-NX v1.3.6
+# CivSwitch-LDN-NX v1.3.7
 
 <p align="center">
   <img src="logo.png" alt="CivSwitch-LDN-NX logo" width="220">
