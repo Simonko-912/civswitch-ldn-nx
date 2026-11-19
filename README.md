@@ -27,6 +27,10 @@
 > are specifically overriding Civilization VII, open the Album and launch
 > `civswitch-ldn-nx.nro` from there.
 
+v1.3.8 splits the buttons: **ZL** now sends `sdmc:/switch/payload.js` to a
+running loader without touching saves, while **ZR** keeps the full one-click
+save install. Both need the Switch 2 already connected in the lobby.
+
 v1.3.3 makes the ZR one-click save work **over local wireless only**:
 no Wi-Fi/LAN network is needed for the save transfer. The Remote JS
 Loader on the Switch 2 now starts listening on `0.0.0.0:9026` even with
@@ -138,6 +142,7 @@ If the upload times out:
 | Up / Down | Select a scanned LDN network |
 | A | Join the selected lobby and register as a player |
 | ZR | One-click loader delivery and persistent save installation |
+| ZL | Send `sdmc:/switch/payload.js` to the running loader only; keeps the installed trigger save |
 | R | Send the Remote JS Loader only; do not modify saves |
 | Y | Send one optional chat test |
 | X | Rescan or return to LDN mode after an installer attempt |
